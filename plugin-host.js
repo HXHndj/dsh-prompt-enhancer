@@ -2412,11 +2412,11 @@ const ENV_PROBE_KEYS = [
   { key: 'port-pid', level: 'warn' },  // v3.2.1-o：3080 实际监听者 PID
 ];
 
-// 安装命令构造：node <dshBin> plugin --profile <profile> add github:Fishsb/dsh-prompt-enhancer#<tag>
+// 安装命令构造：node <dshBin> plugin --profile <profile> add github:HXHndj/dsh-prompt-enhancer#<tag>
 // dshBin 由 lib/index.cjs 从 process.argv[1] 注入（host 沙箱无 process）；
 // 参数级白名单校验在 lib 层 isInstallArgs 二次把关。
 function buildInstallArgs(dshBin, tag, profile) {
-  return [dshBin, 'plugin', '--profile', profile, 'add', 'github:Fishsb/dsh-prompt-enhancer#' + tag];
+  return [dshBin, 'plugin', '--profile', profile, 'add', 'github:HXHndj/dsh-prompt-enhancer#' + tag];
 }
 
 // GitHub Release 资产下载地址（npm pack 产物，staging 阶段在线拉取，服务不中断）。

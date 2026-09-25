@@ -1274,16 +1274,16 @@ test('U57 resolveTemplateSystem 模板选中解析（default/increment/custom/le
 test('U42 buildInstallArgs 命令构造（v2.5.0）', () => {
   const args = buildInstallArgs('D:\\dsh\\bin.js', 'v2.5.0', 'web');
   assert.deepEqual(args, [
-    'D:\\dsh\\bin.js', 'plugin', '--profile', 'web', 'add', 'github:Fishsb/dsh-prompt-enhancer#v2.5.0',
-  ], '命令数组形态：node <dshBin> plugin --profile <p> add github:Fishsb/dsh-prompt-enhancer#<tag>');
+    'D:\\dsh\\bin.js', 'plugin', '--profile', 'web', 'add', 'github:HXHndj/dsh-prompt-enhancer#v2.5.0',
+  ], '命令数组形态：node <dshBin> plugin --profile <p> add github:HXHndj/dsh-prompt-enhancer#<tag>');
   // tag 形态透传（含无 v 前缀；lib 层 isInstallArgs 另有正则把关，此处仅契约构造）
   const noV = buildInstallArgs('bin', '2.4.8', 'web');
-  assert.equal(noV[5], 'github:Fishsb/dsh-prompt-enhancer#2.4.8', '无 v 前缀 tag 原样拼接');
+  assert.equal(noV[5], 'github:HXHndj/dsh-prompt-enhancer#2.4.8', '无 v 前缀 tag 原样拼接');
   // profile 透传
   const p = buildInstallArgs('bin', 'v1.0.0', 'custom-profile');
   assert.equal(p[3], 'custom-profile', 'profile 透传');
-  // 固定 repo：任何 tag 都只能拼到 Fishsb/dsh-prompt-enhancer
-  assert.match(args[5], /^github:Fishsb\/dsh-prompt-enhancer#/, 'repo 固定');
+  // 固定 repo：任何 tag 都只能拼到 HXHndj/dsh-prompt-enhancer
+  assert.match(args[5], /^github:HXHndj\/dsh-prompt-enhancer#/, 'repo 固定');
 });
 
 // v2.9.0（执行器外挂 + staging 预拉取）：tarball 下载地址与本地安装命令契约。

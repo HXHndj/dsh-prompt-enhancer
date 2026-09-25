@@ -4,9 +4,9 @@ DeepSeek Harness (DSH) 插件。**核心能力**：
 
 - ✨ **提示词增强** — 输入框草稿一键改写，不满意可撤回
 
-[![Release](https://img.shields.io/github/v/release/Fishsb/dsh-prompt-enhancer)](https://github.com/Fishsb/dsh-prompt-enhancer/releases)
-[![Release date](https://img.shields.io/github/release-date/Fishsb/dsh-prompt-enhancer)](https://github.com/Fishsb/dsh-prompt-enhancer/releases)
-[![Stars](https://img.shields.io/github/stars/Fishsb/dsh-prompt-enhancer)](https://github.com/Fishsb/dsh-prompt-enhancer/stargazers)
+[![Release](https://img.shields.io/github/v/release/HXHndj/dsh-prompt-enhancer)](https://github.com/HXHndj/dsh-prompt-enhancer/releases)
+[![Release date](https://img.shields.io/github/release-date/HXHndj/dsh-prompt-enhancer)](https://github.com/HXHndj/dsh-prompt-enhancer/releases)
+[![Stars](https://img.shields.io/github/stars/HXHndj/dsh-prompt-enhancer)](https://github.com/HXHndj/dsh-prompt-enhancer/stargazers)
 
 ## ✨ 核心功能
 
@@ -26,7 +26,7 @@ DeepSeek Harness (DSH) 插件。**核心能力**：
 ## 🚀 安装
 
 ```sh
-dsh plugin --profile web add github:Fishsb/dsh-prompt-enhancer#main
+dsh plugin --profile web add github:HXHndj/dsh-prompt-enhancer#main
 ```
 
 安装后重启 DSH（`dsh web`），输入框工具行出现 ✨ 按钮即安装成功。
@@ -71,7 +71,7 @@ dsh plugin --profile web remove dsh-prompt-enhancer
 
 ## 📚 文档
 
-- [Releases](https://github.com/Fishsb/dsh-prompt-enhancer/releases)
+- [Releases](https://github.com/HXHndj/dsh-prompt-enhancer/releases)
 - [CHANGELOG](CHANGELOG.md)
 - [兼容性说明](docs/compatibility-matrix.md)
 

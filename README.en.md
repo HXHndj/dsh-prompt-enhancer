@@ -4,9 +4,9 @@ A DeepSeek Harness (DSH) plugin with **one core capability**:
 
 - ✨ **Prompt enhancement** — rewrite composer drafts in place with one click, fully undoable
 
-[![Release](https://img.shields.io/github/v/release/Fishsb/dsh-prompt-enhancer)](https://github.com/Fishsb/dsh-prompt-enhancer/releases)
-[![Release date](https://img.shields.io/github/release-date/Fishsb/dsh-prompt-enhancer)](https://github.com/Fishsb/dsh-prompt-enhancer/releases)
-[![Stars](https://img.shields.io/github/stars/Fishsb/dsh-prompt-enhancer)](https://github.com/Fishsb/dsh-prompt-enhancer/stargazers)
+[![Release](https://img.shields.io/github/v/release/HXHndj/dsh-prompt-enhancer)](https://github.com/HXHndj/dsh-prompt-enhancer/releases)
+[![Release date](https://img.shields.io/github/release-date/HXHndj/dsh-prompt-enhancer)](https://github.com/HXHndj/dsh-prompt-enhancer/releases)
+[![Stars](https://img.shields.io/github/stars/HXHndj/dsh-prompt-enhancer)](https://github.com/HXHndj/dsh-prompt-enhancer/stargazers)
 
 ## ✨ Core feature
 
@@ -26,7 +26,7 @@ The ✨ button in the composer toolbar triggers an independent LLM call and rewr
 ## 🚀 Install
 
 ```sh
-dsh plugin --profile web add github:Fishsb/dsh-prompt-enhancer#main
+dsh plugin --profile web add github:HXHndj/dsh-prompt-enhancer#main
 ```
 
 Restart DSH (`dsh web`) after installing — the ✨ button appears in the composer toolbar.
@@ -70,7 +70,7 @@ Settings → "Models & plugins":
 
 ## 📚 Docs
 
-- [Releases](https://github.com/Fishsb/dsh-prompt-enhancer/releases)
+- [Releases](https://github.com/HXHndj/dsh-prompt-enhancer/releases)
 - [CHANGELOG](CHANGELOG.md)
 - [Compatibility notes](docs/compatibility-matrix.md)
 
