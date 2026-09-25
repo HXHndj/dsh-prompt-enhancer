@@ -26,12 +26,12 @@ DeepSeek Harness (DSH) 插件。**核心能力**：
 ## 🚀 安装
 
 ```sh
-dsh plugin --profile web add github:HXHndj/dsh-prompt-enhancer#main
+dsh plugin --profile web add github:HXHndj/dsh-prompt-enhancer#v3.5.0
 ```
 
 安装后重启 DSH（`dsh web`），输入框工具行出现 ✨ 按钮即安装成功。
 
-> ℹ️ **版本说明**：本插件已剥离语音识别（DSH 官方桌面端已内置语音识别），现为**提示词增强（✨）单功能插件**；**剥离语音后的新 tag 尚待发布**，故上面的命令暂装 `#main` 分支，新 tag 发布后可改回 `#vX.Y.Z` 锁定已发布版本。`#main` 已包含 ✨ 官方槽位契约修复（Issue #8 / #10）。**注意**：v3.4.0 起**移除了插件内重启能力**（更新后请手动重启 DSH），详见 [release notes](release-notes/3.4.0.md)。
+> ℹ️ **版本说明**：本插件已剥离语音识别（DSH 官方桌面端已内置语音识别），现为**提示词增强（✨）单功能插件**；v3.5.0 即剥离语音后的首个发布 tag，上方命令已锁定该版本（含 ✨ 官方槽位契约修复 Issue #8 / #10）。**注意**：v3.4.0 起**移除了插件内重启能力**（更新后请手动重启 DSH）；v3.5.0 **移除语音识别**（`voice/*` RPC 全部下线，BREAKING），详见 [release notes](release-notes/3.5.0.md)。
 >
 > 需本机已装 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 且 `pnpm` 在 PATH 中。
 >

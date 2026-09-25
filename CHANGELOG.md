@@ -1,19 +1,20 @@
 # Changelog
 
 [3.3.3]: https://github.com/Fishsb/dsh-prompt-enhancer/compare/v3.3.2...v3.3.3
-[Unreleased]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v3.4.0...HEAD
+[Unreleased]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v3.5.0...HEAD
+[3.5.0]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v3.4.0...v3.5.0
 [3.4.0]: https://github.com/Fishsb/dsh-prompt-enhancer/compare/v3.3.3...v3.4.0
 [3.3.2]: https://github.com/Fishsb/dsh-prompt-enhancer/compare/v3.3.1...v3.3.2
 [3.3.1]: https://github.com/Fishsb/dsh-prompt-enhancer/compare/v3.3.0...v3.3.1
 
 本项目所有重要变更记录于此文件。
-格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)。完整发布说明见 [GitHub Releases](https://github.com/Fishsb/dsh-prompt-enhancer/releases)。
+格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)。完整发布说明见 [GitHub Releases](https://github.com/HXHndj/dsh-prompt-enhancer/releases)。
 
 > 实测标注纪律：每条变更须在文末标注「已实测：<方式/等级>」；未实测不得合入（2026-08-24 门禁化）。
 
 > 🗺️ 条目内的 `flow:` 标注为功能链路标签（原 pmg 项目地图 `docs/map/` 已随 pmg 于 2026-09-10 移除，该路径不再存在）；agent 开工前先读 [`AGENTS.md`](AGENTS.md)。
 
-## [Unreleased]
+## [3.5.0] - 2026-09-25
 
 ### Removed
 

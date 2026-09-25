@@ -26,12 +26,12 @@ The ✨ button in the composer toolbar triggers an independent LLM call and rewr
 ## 🚀 Install
 
 ```sh
-dsh plugin --profile web add github:HXHndj/dsh-prompt-enhancer#main
+dsh plugin --profile web add github:HXHndj/dsh-prompt-enhancer#v3.5.0
 ```
 
 Restart DSH (`dsh web`) after installing — the ✨ button appears in the composer toolbar.
 
-> ℹ️ **Version note**: speech recognition has been stripped from this plugin (the official DSH desktop app already ships speech recognition), which makes it a **prompt-enhancement (✨) single-feature plugin**; **a new tag for the stripped build is pending release**, so the command above installs the `#main` branch for now — once the new tag is out, pin it back to `#vX.Y.Z`. `#main` already contains the ✨ official slot-contract fix (Issue #8 / #10). **Note**: from v3.4.0 the **in-plugin restart capability is removed** (restart DSH manually after an update) — see [release notes](release-notes/3.4.0.md).
+> ℹ️ **Version note**: speech recognition has been stripped from this plugin (the official DSH desktop app already ships speech recognition), which makes it a **prompt-enhancement (✨) single-feature plugin**; v3.5.0 is the first released tag of the stripped build, and the command above is pinned to it (it includes the ✨ official slot-contract fix, Issue #8 / #10). **Note**: from v3.4.0 the **in-plugin restart capability is removed** (restart DSH manually after an update); v3.5.0 **removes speech recognition** (all `voice/*` RPCs are gone — BREAKING) — see [release notes](release-notes/3.5.0.md).
 >
 > Requires [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) installed locally and `pnpm` in PATH.
 >
