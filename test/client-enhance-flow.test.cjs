@@ -34,7 +34,7 @@ function loadHelpers() {
   };
   const factory = new Function(
     'host', 'configState', 'localStorage', 'MEMORY_ROUNDS_MAX', 'SEEN_KEY_PREFIX',
-    src + '\n;return { enhance, undo, cancelEnhance, guardPasses, setActiveSession, getActiveSession, storeFor, isEnhancing };'
+    src + '\n;return { enhance, undo, cancelEnhance, guardPasses, setActiveSession, getActiveSession, storeFor };'
   );
   const api = factory(hostStub, { value: { memory: false } }, localStorageStub, 4, 'dsh-enh-seen:');
   return { api, hostStub, lsBacking };
@@ -124,10 +124,8 @@ test('ENH-FLOW cancel: 在途取消 → 还原 backup + 取消 RPC + 清持久�
   hostStub.respond = () => new Promise(() => {}); // 永不完成
   api.enhance(sid, '原文C', inputActions, draftRef);
   await flush();
-  assert.equal(api.isEnhancing(sid), true);
   api.cancelEnhance(sid, inputActions);
   assert.equal(writes.includes('原文C'), true, '取消必须还原 backup');
-  assert.equal(api.isEnhancing(sid), false);
   assert.equal(lsBacking.has(RK(sid)), false, '取消必须清理陈旧持久化');
   const cancelCall = hostStub.calls.find((c) => c.method === 'cancel');
   assert.ok(cancelCall, '必须发送 cancel RPC');

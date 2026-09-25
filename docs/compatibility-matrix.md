@@ -45,22 +45,12 @@
 | `update/diagTail` | client → host | 诊断日志尾部补取（只读·脱敏；更新/重启失败路径补 DSH err 日志根因） | 只读 |
 | `config/get` | client → host | 读取磁盘配置（$DSH_HOME/dsh-prompt-enhancer.config.json；DSH Desktop 动态端口配置恢复） | 只读 |
 | `config/set` | client → host | 写入磁盘配置（原子写 tmp+rename，≤1MB） | 用户触发 |
-| `voice/modelList` | client → host | 本地模型清单（含已下载状态） | 只读 |
-| `voice/modelDownload` | client → host | 下载本地模型（读配置 `download.proxy` 走显式代理；多源切换 + 断点续传） | 用户触发 |
-| `voice/modelProgress` | client → host | 模型下载进度 | 只读 |
-| `voice/modelApply` | client → host | 切换当前本地模型（重启 worker 加载） | 用户触发 |
-| `voice/modelOpenDir` | client → host | 打开模型目录 | 用户触发 |
-| `voice/modelDelete` | client → host | 删除已下载模型 | 用户触发 |
-| `voice/deployRuntime` | client → host | 本地引擎运行时一键部署（复制 worker + 安装 sherpa-onnx，异步） | 用户触发 |
-| `voice/deployStatus` | client → host | 部署状态轮询 | 只读 |
-| `voice/status` | client → host | 语音引擎 / 规整就绪状态（local 字段实时探测 worker） | 只读 |
-| `voice/transcribe` | client → host | 音频（data URL）→ 云端/本地识别 → 可选规整，返回 `{text,raw,refined}`；apiKey 不进 RPC 请求 | 用户触发 |
 
-> 注：`models/*` / `plugins/*` / `logs/*` / `template/*` / `update/check`·`update/pull`·`update/envcheck` / `enhance*` / `cancel` 共 18 条注册于 `plugin-host.js`（经 `lib/index.cjs` 桥接）；`config/*` / `voice/*` / `update/executorEnsure`·`update/install`·`update/restartNeeded`·`update/diagTail` 共 16 条直接注册于 `lib/index.cjs`。两侧同挂 `/dsh-prompt-enhancer/rpc`，合计 **34** 条（插件内重启能力退役后重算：`update/portRestart` / `update/makeShortcut` 两条 RPC 已移除，`update/install` 与 `update/diagTail` 为现行集合；以两文件 `harness.handle(` 枚举逐条对照）。
+> 注：`models/*` / `plugins/*` / `logs/*` / `template/*` / `update/check`·`update/pull`·`update/envcheck` / `enhance*` / `cancel` 共 18 条注册于 `plugin-host.js`（经 `lib/index.cjs` 桥接）；`config/*` / `update/executorEnsure`·`update/install`·`update/restartNeeded`·`update/diagTail` 共 6 条直接注册于 `lib/index.cjs`。两侧同挂 `/dsh-prompt-enhancer/rpc`，合计 **24** 条（插件内重启能力退役后重算：`update/portRestart` / `update/makeShortcut` 两条 RPC 已移除，`update/install` 与 `update/diagTail` 为现行集合；以两文件 `harness.handle(` 枚举逐条对照）。
 
 > 注：`update/executorEnsure` / `update/install` / `update/restartNeeded` 在 host RPC 清单中保留（部分版本由 client 直连执行器 3081），见 executor RPC；执行器自插件内重启能力退役后只负责**下载 / 校验 / 安装 / 回滚**，不再重启。
 
-> 注（**P2 · 2026-09-19 · 参数校验申报**）：上述 34 条中 **17 条有参数校验**（`lib/rpc-schema.cjs` 的 `schemas`），另 **17 条无校验且在此具名申报**——**禁止按类别笼统豁免**；新增线上方法却不申报、或申报过期，都会被 `node scripts/rpc-manifest.mjs --check` 拒绝（事实源由注册面派生，不靠人工清点）。
+> 注（**P2 · 2026-09-19 · 参数校验申报**）：上述 24 条中 **9 条有参数校验**（`lib/rpc-schema.cjs` 的 `schemas`），另 **15 条无校验且在此具名申报**——**禁止按类别笼统豁免**；新增线上方法却不申报、或申报过期，都会被 `node scripts/rpc-manifest.mjs --check` 拒绝（事实源由注册面派生，不靠人工清点）。
 >
 > | 方法 | 桶 | 理由 |
 > |---|---|---|
@@ -74,8 +64,6 @@
 > | `plugins/inventory` | **A** 无参/只读 | 只读：列举插件清单 |
 > | `template/default` | **A** 无参/只读 | 无参只读：返回内置模板目录 |
 > | `update/restartNeeded` | **A** 无参/只读 | 只读：文件 mtime 比对，无副作用 |
-> | `voice/deployRuntime` | **A** 无参/只读 | 无参动作：部署本地 ASR worker（固定流程，无用户入参） |
-> | `voice/deployStatus` | **A** 无参/只读 | 无参只读：本地 worker 部署态 |
 > | `models/resolve` | **B** 有参·保持宽松 | 有参（provider/model）保持宽松：非法值由下游 resolveModelInfo 兜底，收紧急属 BREAKING |
 > | `plugins/stop` | **B** 有参·保持宽松 | 有参（pluginId）保持宽松：非法 id 由插件面自行返回 not-found |
 > | `plugins/undefine` | **B** 有参·保持宽松 | 有参（pluginId）保持宽松：同上 |
@@ -150,12 +138,12 @@
 
 | 依赖 | 声明处 | 版本边界 | 不满足时行为 |
 |---|---|---|---|
-| `@deepseek-ai/dsh-client-runtime` | `package.json` `peerDependencies`（与 `dsh.client.inject` 同名列） | `^0.1.0-rc.6` | 宿主缺失 → `dsh.client.inject` 不满足，client 半部不注入（✨/🎤/设置页 UI 均不出现） |
+| `@deepseek-ai/dsh-client-runtime` | `package.json` `peerDependencies`（与 `dsh.client.inject` 同名列） | `^0.1.0-rc.6` | 宿主缺失 → `dsh.client.inject` 不满足，client 半部不注入（✨/设置页 UI 均不出现） |
 | `@deepseek-ai/dsh-client-locale` | `package.json` `peerDependencies`（与 `dsh.client.inject` 同名列） | `^0.1.0-rc.6` | 同上（同时是 i18n 取词源） |
-| `@deepseek-ai/dsh-client-ui-renderer` | **不在** `peerDependencies`，由宿主自带 | 会话级槽位条目契约自 `0.1.2-rc.1` 起 | 更早渲染器只提供 `props.session` / `props.input` 形态 → 插件走旧形态回退兼容；两种形态都无 → ✨/🎤 不渲染 |
-| 客户端 `inputActions`（草稿插入能力） | 宿主 client 注入（能力判定，无版本号） | — | 无 `setDraft` → 识别结果追加到草稿末尾；完全不注入 → 🎤 禁用并提示 |
+| `@deepseek-ai/dsh-client-ui-renderer` | **不在** `peerDependencies`，由宿主自带 | 会话级槽位条目契约自 `0.1.2-rc.1` 起 | 更早渲染器只提供 `props.session` / `props.input` 形态 → 插件走旧形态回退兼容；两种形态都无 → ✨ 不渲染 |
+| 客户端 `inputActions`（草稿写入能力） | 宿主 client 注入（能力判定，无版本号） | — | 无 `setDraft` → 增强结果不回写草稿（仅结果条目展示，撤回/取消同样静默跳过） |
 
-说明：`package.json` `dependencies` 实测仅 `undici`（执行器副本由 `ensureExternalExecutor` 同步 `node_modules/undici`）；**undici 亦服务语音模型下载**（`asr-models.cjs` → `net-proxy`）；host 半部与执行器不声明 peerDependency。上表由 `package.json` `peerDependencies` 与 README「输入框工具行（✨/🎤）客户端契约」段落实读得出，改 peerDependency 或槽位契约时须同步本节。
+说明：`package.json` `dependencies` 实测仅 `undici`（执行器副本由 `ensureExternalExecutor` 同步 `node_modules/undici`）；host 半部与执行器不声明 peerDependency。上表由 `package.json` `peerDependencies` 与 README「输入框工具行（✨）客户端契约」段落实读得出，改 peerDependency 或槽位契约时须同步本节。
 
 ---
 

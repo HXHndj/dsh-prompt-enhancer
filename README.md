@@ -1,17 +1,16 @@
 # dsh-prompt-enhancer
 
-DeepSeek Harness (DSH) 插件。**两大核心能力**：
+DeepSeek Harness (DSH) 插件。**核心能力**：
 
 - ✨ **提示词增强** — 输入框草稿一键改写，不满意可撤回
-- 💬 **语音识别** — 说完自动停，云端 / 本地双引擎离线可用，识别结果填入草稿
 
 [![Release](https://img.shields.io/github/v/release/Fishsb/dsh-prompt-enhancer)](https://github.com/Fishsb/dsh-prompt-enhancer/releases)
 [![Release date](https://img.shields.io/github/release-date/Fishsb/dsh-prompt-enhancer)](https://github.com/Fishsb/dsh-prompt-enhancer/releases)
 [![Stars](https://img.shields.io/github/stars/Fishsb/dsh-prompt-enhancer)](https://github.com/Fishsb/dsh-prompt-enhancer/stargazers)
 
-## ✨ 两大核心功能
+## ✨ 核心功能
 
-### 1. 提示词增强（✨）
+### 提示词增强（✨）
 
 输入框工具行的 ✨ 按钮触发一次独立 LLM 调用，直接改写当前草稿；可继续优化、可撤回、增强中可取消。
 
@@ -20,16 +19,6 @@ DeepSeek Harness (DSH) 插件。**两大核心能力**：
 - **记忆开关** — 开启后，发送前的多轮「优化→修改→再优化」累积为记忆链，下一轮代入历史并感知修改方向；发送消息即清空，关闭后完全停止读写
 - **模型链** — 按序尝试多个模型，可增删改序、开关思考、行内连通性测试
 
-### 2. 语音识别（💬）
-
-输入框旁的 🎤 录音按钮开始说话，识别（**云端** Qwen3-ASR / **本地离线** SenseVoice 双引擎）→ 可选规整（去口水词）→ 填入草稿 → 可一键优化。**说完停顿自动停止**（VAD 静音检测），录音仅内存中转不落盘。
-
-- **双引擎** — 云端 Qwen3-ASR / 本地离线 SenseVoice（框架 + 可选下载，发布物精简）
-- **说完自动停** — VAD 静音检测，无需手动停止（最长 60 秒自动结束）
-- **快捷键唤醒** — 可录制全局快捷键，点按 / 长按双触发
-- **文本规整** — 识别结果可选经基座 LLM 规整，去口语化
-- **自动增强** — 开启后识别填入草稿即自动触发提示词增强
-
 ## 🔧 其他能力
 
 - 🌐 **多语言** — 按钮与文案跟随 DSH 界面语言（中文 / English）
@@ -37,18 +26,16 @@ DeepSeek Harness (DSH) 插件。**两大核心能力**：
 ## 🚀 安装
 
 ```sh
-dsh plugin --profile web add github:Fishsb/dsh-prompt-enhancer#v3.4.0
+dsh plugin --profile web add github:Fishsb/dsh-prompt-enhancer#main
 ```
 
 安装后重启 DSH（`dsh web`），输入框工具行出现 ✨ 按钮即安装成功。
 
-> ℹ️ **版本说明**：最新 tag **`v3.4.0`（2026-09-19）**已包含 ✨ 官方槽位契约修复（Issue #8 / #10）与云端语音修复（Issue #9），上面的命令直接装该 tag。若你此前按旧说明装的是 `#main`，按上面命令重装即可锁到已发布版本。**注意**：v3.4.0 起**移除了插件内重启能力**（更新后请手动重启 DSH），详见 [release notes](release-notes/3.4.0.md)。
+> ℹ️ **版本说明**：本插件已剥离语音识别（DSH 官方桌面端已内置语音识别），现为**提示词增强（✨）单功能插件**；**剥离语音后的新 tag 尚待发布**，故上面的命令暂装 `#main` 分支，新 tag 发布后可改回 `#vX.Y.Z` 锁定已发布版本。`#main` 已包含 ✨ 官方槽位契约修复（Issue #8 / #10）。**注意**：v3.4.0 起**移除了插件内重启能力**（更新后请手动重启 DSH），详见 [release notes](release-notes/3.4.0.md)。
 >
 > 需本机已装 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 且 `pnpm` 在 PATH 中。
 >
-> **客户端兼容性（语音识别）**：🎤 语音输入依赖客户端注入 `inputActions.setDraft`（官方 web client 已满足）；第三方客户端若实现同一契约即可加载，能力集不同时语音输入自动**降级**（无插入能力 → 识别结果追加到草稿末尾；完全不注入 → 🎤 禁用并提示）。**本地离线引擎为「框架 + 可选下载」模式**：插件安装**不携带/不默认下载模型**；设置 → 模型配置 → 💬 语音识别 → 引擎选「本地」→ 「本地模型」区点 **下载模型**（SenseVoice 228MB，带进度显示），下载完成自动生效。详见 [兼容性矩阵](docs/compatibility-matrix.md)（客户端依赖边界与槽位契约）。
->
-> **输入框工具行（✨/🎤）客户端契约**：输入框右侧按钮与错误提示挂载在会话级槽位 `conversation.input.right` / `conversation.input.dock`。官方渲染器（`@deepseek-ai/dsh-client-ui-renderer` ≥ 0.1.2-rc.1，web 与 DSH Desktop 同源）向槽位条目注入 **`sessionId` prop + `useSession`/`useInput` 选择器 hook + `inputActions` prop**（不提供 `props.session` / `props.input`）；插件自该修复（Issue #8 / #10，commit `0197ae7`，自 `v3.4.0` 起随 tag 发布）起按该契约取值，并兼容旧宿主（提供 `props.session` / `props.input` 形态）。第三方客户端渲染器若以其它方式提供会话/输入状态，需实现同一契约（`sessionId` + 上述 hooks 与 actions），✨/🎤 方可显示。
+> **输入框工具行（✨）客户端契约**：输入框右侧按钮与错误提示挂载在会话级槽位 `conversation.input.right` / `conversation.input.dock`。官方渲染器（`@deepseek-ai/dsh-client-ui-renderer` ≥ 0.1.2-rc.1，web 与 DSH Desktop 同源）向槽位条目注入 **`sessionId` prop + `useSession`/`useInput` 选择器 hook + `inputActions` prop**（不提供 `props.session` / `props.input`）；插件自该修复（Issue #8 / #10，commit `0197ae7`，自 `v3.4.0` 起随 tag 发布）起按该契约取值，并兼容旧宿主（提供 `props.session` / `props.input` 形态）。第三方客户端渲染器若以其它方式提供会话/输入状态，需实现同一契约（`sessionId` + 上述 hooks 与 actions），✨ 方可显示。
 
 
 更新 / 卸载：
@@ -73,23 +60,13 @@ dsh plugin --profile web remove dsh-prompt-enhancer
 3. 等待独立 LLM 调用完成，草稿被替换为增强版本
 4. 不满意点击 **可撤回** 恢复原文
 
-## 📸 效果展示
-
-**语音识别**（输入框 🎤 录音按钮，说完自动停）：
-
-![语音识别](docs/screenshots/voice-main.png)
-
-**语音识别设置**（引擎切换 / 快捷键唤醒 / 模型下载 / 文本规整）：
-
-![语音识别设置](docs/screenshots/voice-settings.png)
-
 ## ⚙️ 配置
 
 设置 →「模型与插件」：
 
 | Tab | 说明 |
 |---|---|
-| **模型配置** | 配置优化模型链，按序尝试、可增删改序；**语音识别**段落（引擎切换 / 快捷键唤醒 / 本地模型下载 / 文本规整） |
+| **模型配置** | 配置优化模型链，按序尝试、可增删改序 |
 | **优化参数** | 优化模式 / 记忆开关 / 上下文预算 / 超时与输出上限 / 模板 |
 
 ## 📚 文档
@@ -100,10 +77,3 @@ dsh plugin --profile web remove dsh-prompt-enhancer
 
 > 隐私：插件不记录、不上报任何数据；增强结果来自外部 LLM，发送前请自行核对。
 
-### 🌐 网络受限环境下载语音模型
-
-本地模型托管于 Hugging Face。若你的网络无法直连（大陆网络常见）：
-
-1. **走本地代理**：代理软件保持运行（系统代理开关可不打开）；在配置文件 `%DSH_HOME%\dsh-prompt-enhancer.config.json` 加入顶层字段 `"download": { "proxy": "http://127.0.0.1:10808" }`（或 `socks5://…`），保存后重新点下载即走代理；
-2. **手动放置**：从 [hf-mirror.com](https://hf-mirror.com) 下载模型文件放入 `%DSH_HOME%\dsh-prompt-enhancer-asr\models\<模型id>\`（sense-voice 需 `model.int8.onnx` + `tokens.txt`），刷新设置页即识别为已安装；
-3. 下载内置**断点续传与多源自动切换**（HuggingFace ↔ hf-mirror），偶发中断重试即可续传。

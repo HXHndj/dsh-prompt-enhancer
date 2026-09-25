@@ -968,7 +968,8 @@ test('U40 prompts 外置一致性（v2.4.6）：生成区 = prompts/*.md 逐行�
   };
   const mdOf = (file) => {
     // v3.2.23（技能集合化）：事实源迁移到 skills/enhance/（按相对路径）
-    const lines = readFileSync(join(__dirname, '..', 'skills', 'enhance', file), 'utf8').split('\n');
+    // 先归一 CRLF：Windows autocrlf=true 检出时磁盘 md 为 CRLF，而生成区数组是 LF（sync-prompts 生成时即按 /\r?\n/ 归一），不归一会造成假性不等
+    const lines = readFileSync(join(__dirname, '..', 'skills', 'enhance', file), 'utf8').replace(/\r\n/g, '\n').split('\n');
     while (lines.length > 0 && lines[lines.length - 1].trim() === '') lines.pop();
     return lines.join('\n');
   };
@@ -1615,18 +1616,11 @@ test('U66 parseSearchPlan JSON 容错解析（v3.0p）', () => {
 });
 
 /* ================= LIB 接线锚点（t7 回归防护：「引用有声明」源文本 grep 断言） =================
- * 背景：commit 89577aa（批次D logT 包装插入）曾误删 lib/index.cjs 的 asrDeploy 与
- * lib/stage-install.cjs 的 sys 两个 require 绑定——node --check 只验语法、调用点懒执行
+ * 背景：commit 89577aa（批次D logT 包装插入）曾误删 lib/stage-install.cjs 的 sys
+ * require 绑定——node --check 只验语法、调用点懒执行
  * 使既有单测假绿，终审才发现。本组用纯源文本 grep 锁定「引用有声明」不变量
  * （不 require 目标模块，零副作用；调用点数量下限防「绑定在位但被孤立」漂移）。 */
 const libSrc = (rel) => readFileSync(join(__dirname, '..', rel), 'utf8');
-
-test('LIBWIRE-01 index.cjs 的 asrDeploy require 绑定在位且调用点 ≥2', () => {
-  const src = libSrc('lib/index.cjs');
-  assert.match(src, /const asrDeploy = require\('\.\/asr-deploy\.cjs'\);/, 'asrDeploy require 绑定必须在位（voice/deployRuntime、voice/deployStatus 消费）');
-  const calls = (src.match(/asrDeploy\./g) || []).length;
-  assert.ok(calls >= 2, 'asrDeploy 调用点应 ≥2，实测 ' + calls);
-});
 
 test('LIBWIRE-02 stage-install.cjs 的 sys require 绑定在位且调用点 ≥3', () => {
   const src = libSrc('lib/stage-install.cjs');

@@ -1,17 +1,16 @@
 # dsh-prompt-enhancer
 
-A DeepSeek Harness (DSH) plugin with **two core capabilities**:
+A DeepSeek Harness (DSH) plugin with **one core capability**:
 
 - ✨ **Prompt enhancement** — rewrite composer drafts in place with one click, fully undoable
-- 💬 **Voice recognition** — speech-to-text that stops on silence, with cloud / local dual engines; the transcript is filled into the draft
 
 [![Release](https://img.shields.io/github/v/release/Fishsb/dsh-prompt-enhancer)](https://github.com/Fishsb/dsh-prompt-enhancer/releases)
 [![Release date](https://img.shields.io/github/release-date/Fishsb/dsh-prompt-enhancer)](https://github.com/Fishsb/dsh-prompt-enhancer/releases)
 [![Stars](https://img.shields.io/github/stars/Fishsb/dsh-prompt-enhancer)](https://github.com/Fishsb/dsh-prompt-enhancer/stargazers)
 
-## ✨ Two core features
+## ✨ Core feature
 
-### 1. Prompt enhancement (✨)
+### Prompt enhancement (✨)
 
 The ✨ button in the composer toolbar triggers an independent LLM call and rewrites the current draft in place; keep refining, undo anytime, or cancel while enhancing.
 
@@ -20,16 +19,6 @@ The ✨ button in the composer toolbar triggers an independent LLM call and rewr
 - **Memory switch** — when on, pre-send rounds (optimize → edit → re-optimize) accumulate into a memory chain the next round replays and senses your edit direction; sending the message clears it; when off, nothing is read or written
 - **Model chain** — try multiple models in order, reorder, toggle thinking, run inline connectivity tests
 
-### 2. Voice recognition (💬)
-
-The 🎤 record button beside the composer starts listening; the transcript (cloud Qwen3-ASR / local offline SenseVoice dual engines) → optional refinement (de-filler) → filled into the draft → can be enhanced with one click. **Stops automatically on silence** (VAD), audio stays in memory only and is never written to disk.
-
-- **Dual engines** — cloud Qwen3-ASR / local offline SenseVoice (framework + optional download, slim release)
-- **Stops on silence** — VAD silence detection, no manual stop needed (auto-stops after at most 60 seconds)
-- **Hotkey wake** — recordable global hotkey, tap / long-press dual trigger
-- **Transcript refinement** — optionally refine the transcript through the base LLM to remove filler words
-- **Auto-enhance** — when on, filling the draft after recognition automatically triggers prompt enhancement
-
 ## 🔧 Other capabilities
 
 - 🌐 **i18n** — follows the DSH interface language (中文 / English)
@@ -37,18 +26,16 @@ The 🎤 record button beside the composer starts listening; the transcript (clo
 ## 🚀 Install
 
 ```sh
-dsh plugin --profile web add github:Fishsb/dsh-prompt-enhancer#v3.4.0
+dsh plugin --profile web add github:Fishsb/dsh-prompt-enhancer#main
 ```
 
 Restart DSH (`dsh web`) after installing — the ✨ button appears in the composer toolbar.
 
-> ℹ️ **Version note**: the latest tag **`v3.4.0` (2026-09-19)** already contains the ✨ official slot-contract fix (Issue #8 / #10) and the cloud ASR fix (Issue #9); the command above installs that tag. If you previously installed `#main` under the old note, re-running it pins you to a released version. **Note**: from v3.4.0 the **in-plugin restart capability is removed** (restart DSH manually after an update) — see [release notes](release-notes/3.4.0.md).
+> ℹ️ **Version note**: speech recognition has been stripped from this plugin (the official DSH desktop app already ships speech recognition), which makes it a **prompt-enhancement (✨) single-feature plugin**; **a new tag for the stripped build is pending release**, so the command above installs the `#main` branch for now — once the new tag is out, pin it back to `#vX.Y.Z`. `#main` already contains the ✨ official slot-contract fix (Issue #8 / #10). **Note**: from v3.4.0 the **in-plugin restart capability is removed** (restart DSH manually after an update) — see [release notes](release-notes/3.4.0.md).
 >
 > Requires [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) installed locally and `pnpm` in PATH.
 >
-> **Client compatibility (voice recognition)**: 🎤 voice input relies on the client injecting `inputActions.setDraft` (the official web client satisfies this); third-party clients implementing the same contract can load it, and when the capability set differs, voice input **degrades gracefully** (no insert capability → transcript appended to the end of the draft; no injection at all → 🎤 disabled with a notice). The **local offline engine uses a "framework + optional download" model**: the plugin ships **without** and does **not** auto-download models; go to Settings → Model configuration → 💬 Voice recognition → set engine to "Local" → in the "Local model" area click **Download model** (SenseVoice 228MB, with progress), and it takes effect automatically when done. See [compatibility notes](docs/compatibility-matrix.md) (client dependency boundary and slot contract).
->
-> **Composer toolbar (✨/🎤) client contract**: the composer buttons and the error strip mount on the session-scoped slots `conversation.input.right` / `conversation.input.dock`. The official renderer (`@deepseek-ai/dsh-client-ui-renderer` ≥ 0.1.2-rc.1; web and DSH Desktop share the same source) injects **a `sessionId` prop, `useSession`/`useInput` selector hooks, and an `inputActions` prop** into slot entries (it never provides `props.session` / `props.input`); the plugin reads state through that contract since that fix (Issue #8 / #10, commit `0197ae7`, released with `v3.4.0`) and keeps a fallback for older hosts that provide the `props.session` / `props.input` shape. Third-party client renderers must implement the same contract (`sessionId` plus the hooks and actions above) for ✨/🎤 to render.
+> **Composer toolbar (✨) client contract**: the composer button and the error strip mount on the session-scoped slots `conversation.input.right` / `conversation.input.dock`. The official renderer (`@deepseek-ai/dsh-client-ui-renderer` ≥ 0.1.2-rc.1; web and DSH Desktop share the same source) injects **a `sessionId` prop, `useSession`/`useInput` selector hooks, and an `inputActions` prop** into slot entries (it never provides `props.session` / `props.input`); the plugin reads state through that contract since that fix (Issue #8 / #10, commit `0197ae7`, released with `v3.4.0`) and keeps a fallback for older hosts that provide the `props.session` / `props.input` shape. Third-party client renderers must implement the same contract (`sessionId` plus the hooks and actions above) for ✨ to render.
 
 Update / remove:
 
@@ -72,23 +59,13 @@ Core logic lives in standalone Node modules, reusable from other scripts: `lib/u
 3. Wait for the independent LLM call; the draft is replaced with the enhanced version
 4. Not satisfied? Click **Undo** to restore the original
 
-## 📸 See it work
-
-**Voice recognition** (the 🎤 record button, stops on silence):
-
-![Voice recognition](docs/screenshots/voice-main.png)
-
-**Voice recognition settings** (engine switch / hotkey wake / model download / refinement):
-
-![Voice recognition settings](docs/screenshots/voice-settings.png)
-
 ## ⚙️ Configuration
 
 Settings → "Models & plugins":
 
 | Tab | Description |
 |---|---|
-| **Model configuration** | Configure the optimization model chain: tried in order, reorderable; the **Voice recognition** section (engine switch / hotkey wake / local model download / refinement) |
+| **Model configuration** | Configure the optimization model chain: tried in order, reorderable |
 | **Optimization parameters** | Mode / memory switch / context budget / timeout & output limits / templates |
 
 ## 📚 Docs
@@ -99,10 +76,3 @@ Settings → "Models & plugins":
 
 > Privacy: the plugin records or reports nothing; enhanced results come from an external LLM — verify before sending.
 
-### 🌐 Downloading voice models on restricted networks
-
-Local models are hosted on Hugging Face. If your network cannot reach it directly (common in mainland China):
-
-1. **Use a local proxy**: keep your proxy client running (the system proxy switch can stay off); add the top-level field `"download": { "proxy": "http://127.0.0.1:10808" }` (or `socks5://…`) to the config file `%DSH_HOME%\dsh-prompt-enhancer.config.json`; after saving, click download again to go through the proxy;
-2. **Place the files manually**: download the model files from [hf-mirror.com](https://hf-mirror.com) into `%DSH_HOME%\dsh-prompt-enhancer-asr\models\<model id>\` (sense-voice needs `model.int8.onnx` + `tokens.txt`); refresh the settings page and it is detected as installed;
-3. Downloads have built-in **resume support and automatic multi-source switching** (HuggingFace ↔ hf-mirror), so an occasional interruption can simply be retried to resume.

@@ -23,15 +23,15 @@ test('RPC-01 事实源一致性 --check 通过（注册面 / 文档面 / 申报�
 
 // 契约锁：下述数字是**已发布对外契约**的快照。任何变更都必须是有意识的编辑（并评估 BREAKING），
 // 而不是被静默漂移带走——这正是 P2 要关掉的 RC-A「无单一事实源」。
-test('RPC-02 派生清单结构锁：34 = 16(lib/index.cjs) + 18(plugin-host.js)，交集 0，schema 17，具名申报 17', () => {
+test('RPC-02 派生清单结构锁：24 = 6(lib/index.cjs) + 18(plugin-host.js)，交集 0，schema 9，具名申报 15', () => {
   const r = run(['--json']);
   assert.equal(r.ok, true, 'rpc-manifest --json 失败：\n' + r.out);
   const m = JSON.parse(r.out);
-  assert.equal(m.counts.native, 16, 'lib/index.cjs 注册面条数');
+  assert.equal(m.counts.native, 6, 'lib/index.cjs 注册面条数');
   assert.equal(m.counts.bundled, 18, 'plugin-host.js 注册面条数');
-  assert.equal(m.counts.live, 34, '线上方法去重总数');
-  assert.equal(m.counts.schema, 17, 'schema 覆盖条数');
-  assert.equal(m.counts.gap, 17, '具名申报的无校验条数');
+  assert.equal(m.counts.live, 24, '线上方法去重总数');
+  assert.equal(m.counts.schema, 9, 'schema 覆盖条数');
+  assert.equal(m.counts.gap, 15, '具名申报的无校验条数');
   assert.equal(m.noSchema.length, m.counts.gap, 'gap 明细与计数一致');
   assert.ok(m.live.includes('update/install'), 'update/install 在位');
   assert.ok(!m.live.includes('update/portRestart'), '已退役的重启 RPC 不得回流');

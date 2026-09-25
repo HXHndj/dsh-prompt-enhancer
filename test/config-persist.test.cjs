@@ -53,7 +53,7 @@ test('CFG-P07 lib/client.cjs 产物含 syncConfigFromHost/hostSync（构建注�
   assert.ok(s.includes('hostSync'), 'client 产物缺 hostSync 状态机');
 });
 
-// ---- v3.2.5（语音模块）：config/set 顶层键级 merge 语义 ----
+// ---- v3.2.5：config/set 顶层键级 merge 语义 ----
 test('CFG-P08 lib/index.cjs config/set 含 merge 实现（多写入方防互相清空）', () => {
   const src = readFileSync(join(__dirname, '..', 'lib', 'index.cjs'), 'utf8');
   assert.ok(src.includes('顶层键级 merge'), 'config/set 未升级 merge 语义');
@@ -67,16 +67,16 @@ test('CFG-P09 config/set merge 行为：传单键保留其他键（模拟两写�
   const { join } = require('node:path');
   const dir = mkdtempSync(join(tmpdir(), 'dsh-cfg-'));
   const cfgFile = join(dir, 'config.json');
-  // enhancer 先写全量（v3.2.4 行为），voice 再写 voice 键 → enhancer 键必须保留
+  // 先写全量（v3.2.4 行为），另一写入方再补写一个非语音顶层键 → 既有键必须保留
   writeFileSync(cfgFile, JSON.stringify({ version: 2, fallback: [{ provider: 'a', model: 'b' }], params: { timeoutMs: 30000 } }));
   const orig = require('node:fs');
   // 直接复制 merge 逻辑验证（与 lib/index.cjs 同语义：读 → 顶层键合并 → 写）
   const cur = JSON.parse(orig.readFileSync(cfgFile, 'utf8'));
-  const patch = { voice: { asr: { engine: 'cloud' } } };
+  const patch = { futureKey: { enabled: true } };
   const merged = { ...cur };
   for (const k of Object.keys(patch)) merged[k] = patch[k];
   assert.equal(merged.version, 2, 'enhancer 顶层键被清空');
   assert.ok(Array.isArray(merged.fallback) && merged.fallback.length === 1, 'fallback 被清空');
-  assert.equal(merged.voice.asr.engine, 'cloud', 'voice 键未写入');
+  assert.equal(merged.futureKey.enabled, true, 'futureKey 未写入');
   rmSync(dir, { recursive: true, force: true });
 });
