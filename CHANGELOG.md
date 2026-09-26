@@ -1,7 +1,8 @@
 # Changelog
 
 [3.3.3]: https://github.com/Fishsb/dsh-prompt-enhancer/compare/v3.3.2...v3.3.3
-[Unreleased]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v4.0.0...HEAD
+[Unreleased]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v4.0.1...HEAD
+[4.0.1]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v4.0.0...v4.0.1
 [4.0.0]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v3.5.6...v4.0.0
 [3.5.6]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v3.5.5...v3.5.6
 [3.5.5]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v3.5.4...v3.5.5
@@ -22,6 +23,12 @@
 > 🗺️ 条目内的 `flow:` 标注为功能链路标签（原 pmg 项目地图 `docs/map/` 已随 pmg 于 2026-09-10 移除，该路径不再存在）；agent 开工前先读 [`AGENTS.md`](AGENTS.md)。
 
 ## [Unreleased]
+
+## [4.0.1] - 2026-09-27
+
+### Changed
+
+- **优化参数 tab 对齐官方内置插件页（选项 1B/2A/3A/4A/5A；业务逻辑 / RPC 面 / 数据流零改动）** `flow:enhance-ui`：`设置 → 提示词增强 → 优化参数` 的层级表达整体换轨到**官方内置页范式**（源码实测基准：`ui-chat/PreferenceRow.module.css`、`ui-primitives/settings-form/fields.module.css`、`ui-permission-presets`、`ui-settings-general`、`ui-settings-subagent`）——官方全仓**不用短横线标记**，层级 = ①行「左列 title+desc / 右侧控件」②每行 `.5px` 细横线 ③`16px 0` 行内边距；分组 = 组头（官方 `.heading` 档 `13px/600/1.5`，**无标记**）+ 组尾行自身那条细线。① **层级标记退役**：删掉 v3.5.2 的两级短横线（组头 `14×2px` + 字段 `10×2px`）、组间 `1px` 边框与 `18px` 组 padding，`.dsh-plg-group-head::before` 与 `.dsh-plg-params-group .dsh-plg-label::before` 两条伪元素规则删除。② **hint 归位左列（选项 2A）**：说明文字从「行下方 + `padding-left:18px`（= 标记宽 10 + 间距 8 的魔数耦合）」迁入新增 `.dsh-plg-rowtext`（`flex-direction:column;gap:4px;flex:1;padding-right:48px`，与官方 `.rowText` 同值），左缘三条线（22/18/18px）收敛为一条。③ **控件改官方 selector chip（选项 3A）**：`height:36px` / `border:0` / `background:var(--dsw-alias-bg-module-platform)` / `border-radius:var(--dsw-radius-md)`(12px) / `padding:0 14px` / `14px/22px`，宽度随内容、右缘对齐；保留 `max-width:240px` 以维持 MarqueeSelect 超长滚动（`inner.scrollWidth > outer.clientWidth`）的触发条件，配套把 `.dsh-plg-mselect-visual` 由 `flex:1 1 0%` 改 `0 1 auto`（否则 chip 内在宽度塌成 0）、`.dsh-plg-mselect-trigger` 承接 chip 的 `gap:12px`。④ **官方 chevron（选项 4A）**：`▾` 字形换成官方 `IconChevronDownOutline` 几何（`14×14` / `viewBox 0 0 16 16` / `1px` stroke / `currentColor`，路径逐字取自 ui-primitives）内联 SVG；以 `.dsh-plg-mselect-arrow svg{display:none}` 兜底、仅在 `.dsh-plg-params-group` 作用域内 `display:block` 并回到内联流（绝对定位退役），⇒ 模型配置 / 插件管理两 tab 仍走原 `▾`（选项 5A）。⑤ **文本类字段对齐官方 `fields.module.css .input`**：`.5px solid var(--dsw-alias-border-l4)` + `--dsw-radius-md` + `height:34px` + `padding:0 12px`；模板编辑区 `padding-left:18px` 随标记退役归零，内容区改官方纵向字段（新增 `.dsh-plg-textfield`：label 上 / 控件下，`padding:16px 0` + `.5px` 线），按钮与说明贴块尾。⑥ **灰阶收敛**：页脚由「比字段说明再暗一级」的 `label-dimmed` 第三档改为同级 `label-tertiary`，改用同级 `.5px` 细线 + `16px` 顶距划分。⑦ **作用域纪律（选项 5A）**：`.dsh-plg-row`/`.dsh-plg-label`/`.dsh-plg-select`/`.dsh-plg-hint`/`.dsh-plg-input` 为三 tab 共享类，全部新样式一律限定在 `.dsh-plg-params-group` 内；窄面板 `<480px` 行折为「左列 + 全宽 chip」两段式。⑧ **i18n 零改动**：组头按 1B 保留 ⇒ `cfgGroup*` 4 对键继续在用（S-7 读数 ZH 204 / EN 204 不变）。JSX 仅重排容器与 className——各控件 `value/onChange`（含切模式重置默认档）、`template/default` RPC 惰性拉取、`pick/custom` 数据流、`clampParamDisplay`、`aria-describedby`/`htmlFor` 关联逐字未动（改动前后不变式实测：`t('` 29=29、`save(` 3=3、`clampParamDisplay(` 3=3、`MarqueeSelect` 7=7）。**已实测**：① `node --check` 外层 3 件（styles.js / params-tab.js / marquee-select.js）+ 注入串内层 3 件（落盘临时目录后逐件 `--check`）全过；② `node scripts/build-client.mjs` 重建（lib/client.cjs 238,630 字符）后 `--check` **OK**，`build-host --check` OK（版本 4.0.0）；③ `npm run gate` **通过 30 · 冲突 0 · SKIP 3（A194-4/A230-3/S-2，本地治理档缺位）· 在册未达 3 · 在册缺陷 0**，S-7 读数 ZH 204 / EN 204；④ `node scripts/dead-code-gate.mjs --range HEAD`（本轮工作树）R1 64 个新声明全部有引用 / R2 / R3 / R4 全 PASS；⑤ 全量 `npm test` **211/211/0（15 文件，30.2s）**，与改动前基线同数；⑥ **真实渲染实测（隔离临时实例）**：临时 `DSH_HOME` + 随机端口 4751 装本仓库代码起 `dsh --profile web`（未触碰 3080 与桌面 profile），headless Edge CDP 进 `设置 → 提示词增强 → 优化参数` 截图 `shots/ui-params-after-top.png` / `ui-params-after-bottom.png` / `ui-params-after-fragment.png` / `ui-params-custom-template.png`（对照图 `shots/ui-official-general.png` 为同实例官方通用设置页）；同实例逐项量取官方 `oY77xG_row`/`oY77xG_selector` 与本页计算样式：row `padding 16px 0` ✓、row `border-bottom rgba(255,255,255,.12)` ✓、row 宽 559 = 559 ✓、rowText `padding-right 48px` ✓、title `14px/400/22px` ✓、desc `12px/400/18px rgb(173,178,184)` ✓、chip `36px / radius 12px / padding 0 14px / bg rgb(53,54,56) / border 0` ✓；DOM 断言 4 组头 / 7 行 / 7 rowtext / 短横线 0 / 控制台异常 0；实点「＋新建自定义模板」触发 `template/default` RPC 并正确预填内置模板正文（数据流未断）。**Desktop 实机验收由维护者执行，未实测**（本轮验证止于构建、四门禁、全量单测与隔离实例真实渲染层面）。
 
 ## [4.0.0] - 2026-09-26
 
