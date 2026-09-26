@@ -24,6 +24,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **发布脚本二进制资产上传：tgz 被 JSON 化截断后仍报「发布成功」**（v4.0.1 发布当场命中；线上产物已重传修复）：`scripts/release.mjs` 的 `http()` 把**非字符串请求体一律 `JSON.stringify`**——tgz（Buffer）因此被写成 `{"type":"Buffer","data":[...]}` 文本、再按 `content-length` 截断，GitHub 仍返回 201，于是**发布了 21 万字节的损坏资产**（同根因导致紧随其后的 `.sha256` 资产上传 400：同一 keep-alive 连接体量错位）。修复：`Buffer.isBuffer(body)` 与 string 一律原样写，仅对象才 JSON 化。**加固**：`sha256` 提前到上传前计算，上传完成后按 API 资产 `digest` + 字节数**自校验**，不一致即 `exit 1`——把「传上去了但内容不对」从静默面变成发布当场可见。**已实测**：用修好后的 `http()` 实测上传 64KiB 随机二进制 → `201` 且 `digest` 与本地 sha256 一致（临时资产已删除）；v4.0.1 线上资产已重传并复验——`dsh-prompt-enhancer-4.0.1.tgz` 211,911B / `sha256:4006c9f6…`（gzip 魔数 `1f8b`；经 API 资产端点与 `browser_download_url` 两条路径下载均与本地逐字节一致），`.sha256` 资产 96B 且解析值一致；对照 **v4.0.0** 资产（210,626B，digest 与随附 `.sha256` 一致）确认该缺陷为本脚本路径首次触发、历史发布未受影响。`node --check scripts/release.mjs` 通过。
+
 ## [4.0.1] - 2026-09-27
 
 ### Changed

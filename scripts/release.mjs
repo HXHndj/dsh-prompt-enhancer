@@ -59,7 +59,14 @@ function http(url, opts) {
       res.on('end', () => resolve({ status: res.statusCode, body: Buffer.concat(chunks).toString('utf8') }));
     });
     req.on('error', reject);
-    if (opts.body !== undefined) req.write(typeof opts.body === 'string' ? opts.body : JSON.stringify(opts.body));
+    // v4.0.1 修复（事故驱动）：原实现把**非字符串体一律 JSON.stringify**——Buffer（tgz 二进制）
+    // 会被变成 {"type":"Buffer","data":[...]} 文本，再被 content-length 截断，于是「201 成功」
+    // 却发布了损坏的 tgz（v4.0.1 首次发布即命中；`.sha256` 资产随后 400，同一根因：连接体量错位）。
+    // 现在：string / Buffer 原样写，仅对象才 JSON 化。
+    if (opts.body !== undefined) {
+      const b = opts.body;
+      req.write(typeof b === 'string' || Buffer.isBuffer(b) ? b : JSON.stringify(b));
+    }
     req.end();
   });
 }
@@ -135,6 +142,9 @@ if (rel.status >= 300) { console.error('Release 创建失败: ' + rel.status + '
 const release = JSON.parse(rel.body);
 console.log('Release: ' + release.html_url);
 
+// v4.0.1 加固：sha256 提前算——上传完成后要用它按 API 资产 digest 自校验
+const { createHash } = require('node:crypto');
+const sha256 = createHash('sha256').update(readFileSync(tgz)).digest('hex');
 console.log('== 上传 tgz 资产 ==');
 const up = await http('https://uploads.github.com/repos/' + REPO + '/releases/' + release.id + '/assets?name=' + encodeURIComponent(packOut), {
   method: 'POST',
@@ -150,8 +160,7 @@ console.log('资产: ' + asset.browser_download_url);
 console.log('== 上传 .sha256 资产 ==');
 // v3.3.2（供应链加固）：发布同步上传 .sha256——更新器哈希门禁的备用可信通道
 // （主通道为 GitHub API 资产 digest；两通道均不经 ghproxy 类镜像）
-const { createHash } = require('node:crypto');
-const sha256 = createHash('sha256').update(readFileSync(tgz)).digest('hex');
+// （sha256 已提前到上传前计算，见上）
 const shaName = packOut + '.sha256';
 const shaBody = sha256 + '  ' + packOut + '\n';
 const upSha = await http('https://uploads.github.com/repos/' + REPO + '/releases/' + release.id + '/assets?name=' + encodeURIComponent(shaName), {
@@ -161,6 +170,26 @@ const upSha = await http('https://uploads.github.com/repos/' + REPO + '/releases
 });
 if (upSha.status >= 300) { console.error('.sha256 资产上传失败: ' + upSha.status + ' ' + upSha.body.slice(0, 300)); process.exit(1); }
 console.log('sha256: ' + sha256);
+
+// v4.0.1 加固：发布物自校验——按 API 资产 digest + 字节数核对本地 tgz，
+// 让「传上去了但内容不对」这类静默面在发布当场炸掉（而不是等用户更新失败）。
+const assetsRes = await http('https://api.github.com/repos/' + REPO + '/releases/' + release.id + '/assets', {});
+const publishedList = JSON.parse(assetsRes.body);
+const published = Array.isArray(publishedList) ? publishedList.find((a) => a.name === packOut) : null;
+const localSize = statSync(tgz).size;
+if (!published) {
+  console.error('发布物自校验失败：release 资产列表里找不到 ' + packOut);
+  process.exit(1);
+}
+if (published.size !== localSize) {
+  console.error('发布物自校验失败：字节数不一致 published=' + published.size + ' local=' + localSize);
+  process.exit(1);
+}
+if (published.digest && published.digest !== 'sha256:' + sha256) {
+  console.error('发布物自校验失败：digest 不一致 published=' + published.digest + ' local=sha256:' + sha256);
+  process.exit(1);
+}
+console.log('发布物自校验 OK：' + published.size + 'B / sha256:' + sha256 + (published.digest ? '（API digest 一致）' : '（API 未返回 digest，仅比对字节数）'));
 
 // ---- 7. 收尾 ----
 console.log('');
