@@ -17,7 +17,7 @@ The ✨ button in the composer toolbar triggers an independent LLM call and rewr
 - **One-click enhance** — the ✨ button triggers an independent LLM call and replaces the draft; continue refining, undo anytime, cancel while enhancing
 - **5 optimization modes** — Basic (direct) / Lite (previous-round context) / Standard (rules + retrieval) / Expert (task analysis + full retrieval) / One-click Publish (complete dev-spec generator)
 - **Memory switch** — when on, pre-send rounds (optimize → edit → re-optimize) accumulate into a memory chain the next round replays and senses your edit direction; sending the message clears it; when off, nothing is read or written
-- **Model chain** — try multiple models in order, reorder, toggle thinking, run inline connectivity tests
+- **Model** — single-model configuration with optional thinking toggle/level and inline connectivity tests
 
 ## 🔧 Other capabilities
 
@@ -65,7 +65,7 @@ Settings → "Models & plugins":
 
 | Tab | Description |
 |---|---|
-| **Model configuration** | Configure the optimization model chain: tried in order, reorderable |
+| **Model configuration** | Configure the single optimization model (legacy multi-model queue configs are flagged and converge on your next change) |
 | **Optimization parameters** | Mode / memory switch / context budget / timeout & output limits / templates |
 
 ## 📚 Docs

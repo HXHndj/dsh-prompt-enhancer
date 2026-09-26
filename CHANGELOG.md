@@ -14,6 +14,12 @@
 
 > 🗺️ 条目内的 `flow:` 标注为功能链路标签（原 pmg 项目地图 `docs/map/` 已随 pmg 于 2026-09-10 移除，该路径不再存在）；agent 开工前先读 [`AGENTS.md`](AGENTS.md)。
 
+## [Unreleased]
+
+### Changed
+
+- **模型配置改单选（UI 语义收敛；host RPC 面与配置 schema 零改动）**：设置 → 提示词增强 → 模型配置从「模型队列，按顺序逐渐尝试」改为**单选**——只配置一个模型，界面恒写长度 1 的 `fallback` 数组（host 既有链逻辑对长度 1 链天然单模型化，`src/host/pure.js` 链逻辑零改动）。① **旧多模型配置不静默丢弃**：受控值 = `fallback[0]`，检测到 `length > 1` 时卡片上方显示旧版队列收敛提示（`cfgLegacyMulti`，ZH/EN 成对，明确「含清除模型」口径），不做加载时自动改写（resolve 纠偏经 `autoFix` 门控），收敛仅由用户显式动作触发（选择模型 / ✕清除 / 恢复默认）；清除后的空态以**可写回的空卡片**提供重选入口（终审评审修复：＋添加模型按钮退役后空态不得是「选模型死路」——空卡片选提供方即写入 `fallback[0]`，空卡片 ✕ 禁用）；② **首装继承写单模型**：`models/current` 成功 → 继承当前模型（含推理等级映射），无选中（NO_SERVICE/EMPTY）或 RPC 拒绝 → 官方默认链第一项 `DEFAULT_MODEL_CHAIN[0]`（原空 catch 补齐为第三条写回路径，`fill` 补足整链逻辑删除）；③ **失败分类文案**：行内「测试」按 `r.code` 经新增 `testFailKey` 映射 `cfgTestFail*` 九键（网络/超时 30s/模型不存在/密钥/额度/提供方未启用/空响应/中断取消/Generic 兜底，host 英文 message 仅兜底露出；STREAM_THROW 不设映射——该码仅产自增强生成路径），增强失败路径沿用既有 `err*` 键并中性化 `errAllModels`/`errNO_MODEL` 文案；④ **卡片式布局**：`FallbackRow` 原地重写为卡片（head 行 + 提供方/模型/思考模式/思考等级逐行独立单元，新增 `.dsh-plg-modelcard`/`.dsh-plg-card-head`/`.dsh-plg-card-title`/`.dsh-plg-legacy-multi`/`.dsh-plg-modelcard .dsh-plg-field` 样式并补齐 `.dsh-plg-badge-invalid` 裸类定义），「上移/下移」随队列退役、「＋添加模型/清理失效条目」按钮移除、汇总行 ⚠ 迁卡片 head，`rowRemove` 文案改「清除该模型」（匹配 `saveFallback([])` 语义）；⑤ **i18n**：新增 16 对、成对清理 7 对死键（`rowUp`/`rowDown`/`secFallbackCount`/`cfgAddFallback`/`cfgChainHasInvalid`/`cfgRemoveInvalid`/`cfgMeasureLiveFail`），ZH/EN 198/198 → **207/207**（S-7 实测 0 差异）；⑥ 新增 `test/client-model-config.test.cjs` 5 用例（chunk 接线契约 + `testFailKey`/i18n 行为抽检；`decodeChunk` 采用双形态封尾正则，兼容 `model-main-section.js` 无分号无尾换行的特殊形态）。README/README.en/兼容性矩阵同步单模型口径。**已实测**：`node scripts/build-client.mjs` 重建后 `--check` OK / `build-host --check` OK（3.5.0）；全量 `npm test` **234/234/0（15 文件）**（基线 229 + 新增 5）；`npm run gate` **通过 30 · 冲突 0 · SKIP 3（A194-4/A230-3/S-2，本地治理档缺位）· 在册未达 3 · 在册缺陷 0**，S-7 读数 ZH 207/EN 207；`node scripts/dead-code-gate.mjs --range HEAD` 通过（R1 139 个新声明全部有引用；`updater-card.js` 的 `executor` WARN 为在册既有，与本轮无关）。**Desktop 实机验收由维护者执行，未实测**（本轮验证止于构建、四门禁、全量单测与源码/产物静态断言层面，未覆盖 DSH Desktop 运行时 UI 实际交互）。
+
 ## [3.5.0] - 2026-09-25
 
 ### Removed

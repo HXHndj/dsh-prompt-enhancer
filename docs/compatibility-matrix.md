@@ -97,7 +97,7 @@
 | `template.texts` | object | 内置 | 每模式模板（兼容保留；有 `pick` 时不再参与解析） |
 | `template.pick` | object | 各模式 `default` | 每模式选中模板键：`default`（模板1 现有默认）/ `supplement`（模板2 增量补充完善）/ `dev`（模板3 增量完善·开发向）/ `custom:<index>`（自定义列表条目）；非法/越界回退 `default` |
 | `template.custom` | object | 各模式 `[]` | 每模式自定义模板列表 `[{name, text}]`：≤10 条/模式，`text` ≤4000，`name` ≤40 |
-| `fallback` | array | 内置 | 模型链 |
+| `fallback` | array | 内置 | 模型链（v3.6 起 UI 单选：恒写长度 1 数组；host 契约不变，旧多模型配置提示式收敛） |
 | `customModels` | array | `[]` | 自定义模型 |
 | `order` | array | 内置 | 模型顺序 |
 
