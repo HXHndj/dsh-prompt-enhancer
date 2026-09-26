@@ -26,12 +26,12 @@ The ✨ button in the composer toolbar triggers an independent LLM call and rewr
 ## 🚀 Install
 
 ```sh
-dsh plugin --profile web add github:HXHndj/dsh-prompt-enhancer#v3.5.5
+dsh plugin --profile web add github:HXHndj/dsh-prompt-enhancer#v3.5.6
 ```
 
 Restart DSH (`dsh web`) after installing — the ✨ button appears in the composer toolbar.
 
-> ℹ️ **Version note**: speech recognition has been stripped from this plugin (the official DSH desktop app already ships speech recognition), which makes it a **prompt-enhancement (✨) single-feature plugin**; the command above is pinned to v3.5.5 (it includes the ✨ official slot-contract fix, Issue #8 / #10). **Note**: from v3.4.0 the **in-plugin restart capability is removed** (restart DSH manually after an update); v3.5.0 **removes speech recognition** (all `voice/*` RPCs are gone — BREAKING); from v3.5.1 model configuration is single-select; v3.5.2 restructured the settings UI hierarchy; v3.5.3 turned the composer control into a split button (✨ enhance + ▾ menu); v3.5.4 restructures the ▾ menu into two-level drill-down (level 1: memory toggle / model / effort); v3.5.5 fixes three alignment issues (the ▾ glyph now centers in its hover pill, the "undo/continue" text-only buttons center their label, and the memory switch becomes a real toggle matching DSH's native Switch) — see [release notes](release-notes/3.5.5.md).
+> ℹ️ **Version note**: speech recognition has been stripped from this plugin (the official DSH desktop app already ships speech recognition), which makes it a **prompt-enhancement (✨) single-feature plugin**; the command above is pinned to v3.5.6 (it includes the ✨ official slot-contract fix, Issue #8 / #10). **Note**: from v3.4.0 the **in-plugin restart capability is removed** (restart DSH manually after an update); v3.5.0 **removes speech recognition** (all `voice/*` RPCs are gone — BREAKING); from v3.5.1 model configuration is single-select; v3.5.2 restructured the settings UI hierarchy; v3.5.3 turned the composer control into a split button (✨ enhance + ▾ menu); v3.5.4 restructures the ▾ menu into two-level drill-down (level 1: memory toggle / model / effort); v3.5.5 fixes three alignment issues (the ▾ glyph now centers in its hover pill, the "undo/continue" text-only buttons center their label, and the memory switch becomes a real toggle matching DSH's native Switch); v3.5.6 adds a "Mode" entry to the ▾ menu (4th level-1 row + a second-level mode panel, switching a mode updates the composer label) — see [release notes](release-notes/3.5.6.md).
 >
 > Requires [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) installed locally and `pnpm` in PATH.
 >

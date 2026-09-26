@@ -19,6 +19,11 @@
 
 > 🗺️ 条目内的 `flow:` 标注为功能链路标签（原 pmg 项目地图 `docs/map/` 已随 pmg 于 2026-09-10 移除，该路径不再存在）；agent 开工前先读 [`AGENTS.md`](AGENTS.md)。
 
+## [Unreleased]
+
+### Added
+
+- **▾ 菜单新增「模式切换」一级行 + 二级模式面板（「单一界面完成所有功能」；仅 client 三件：`components/enhance-menu.js` / `styles.js` / `i18n.js`——host 侧、RPC 面、配置 schema 零改动）** `flow:enhance-ui`：**一级第 4 行**「模式切换」（行内当前模式**短标签** + `›`，与输入框主键 ✨ 后的标签同源同文案 `modeShortLabel`），点击下钻二级**模式面板**——`‹ 返回头` + `MODE_OPTIONS` 全量 5 个内置模式（行内**全称** `modeLabel` + `✓` 当前；行高 34px / 行圆角 12px 与模型·努力程度面板同节奏）；某模式若选中了**用户自定义模板**（`template.pick[mode] = custom:<i>`）则行内尾随该模板名标签（新规则 `.dsh-enh-menu-tag`：`flex:none` + `max-width:42%` + 省略号 ⇒ 长名不挤掉左侧模式全称、`✓` 列不漂移）——「自己新自定义的模式」在此一眼可辨、可直接切回（模板的增删改仍归设置页「优化参数」，本轮不新增模板管理面）。**切模式与设置页同语义**（`applyMode` 逐字对齐 `ParamsTab` 的 onChange）：写 `config.mode` + 重置该模式默认档位（`MODE_PARAMS_DEFAULT` 的 timeout/Token/字符三项 + `MODE_BUDGET_DEFAULT` 的 `budgetChars`）⇒ 从菜单切与从设置页切结果一致；写回经 `subscribeConfig` 广播**联动输入框主键短标签**（基础/轻量/标准/专家/发布）与设置页，无需任何额外联动代码。**返回归位改按 key 查**（新增 `rootKeysRef` 一级行序镜像）：努力程度行可隐藏 ⇒ 行号会漂移，旧硬编码数字（模型=1 / 努力程度=2）在无模型配置时会把高亮落到别行，现返回头 / Escape / 选中回跳统一按 key 归位（`rootRowIndexOf`）。触发器 `title`/`aria-label` 由「模型与记忆设置」改为「增强设置」（覆盖四行语义）。**已实测**：`npm test` **237/237**（新增 1 条接线契约用例：一级行/下钻/全量模式/自定义标签/档位重置/行序镜像/双语键）+ `npm run gate` 全绿；无头浏览器验收 **34/34**（真实 `lib/client.cjs` + 真实 React + 真实 CSS，CDP 盒量测 + 截图，脚本与截图留档 `shots/mode-verify.mjs` / `shots/mode-*.png`）：一级 4 行行高 34px 齐平、`›` 列右缘 1017/1017/1017 对齐、开关右缘 1017 == 箭头列、值列右缘 1005/1005、标签左缘 769×4；二级 5 模式 + `✓` 与下钻高亮均落当前行 + 自定义模板名标签右缘 1017 == `✓` 列；选「轻量」→ 行内值 `轻量` / 输入框主键短标签 `轻量` / `config/set` 载荷 `mode:'lite'` + `params 30000/2000/8000` + `budgetChars 2000`；Escape 与返回头均归位模式行；**边界场景 6/6**（`fallback` 空 → 一级收缩为 3 行，下钻/返回仍落模式行，`shots/mode-verify-empty.mjs`）。
 ## [3.5.5] - 2026-09-26
 
 ### Fixed

@@ -209,3 +209,27 @@ test('ENH-FLOW wiring: ▾ 菜单 chunk 锚点（数据同源设置页 + 写同�
   assert.ok(menu.includes('setActiveIdx(-1)'), '打开不得预高亮首行（对齐 DSH——无悬停无高亮）');
   assert.ok(menu.includes('clampedIdx < 0 ? 0 :'), '↑/↓ 必须兼容 -1 起始（↓ 进首行 / ↑ 进末行）');
 });
+
+// ---------- v3.5.6 模式切换（用户需求）：一级第 4 行 + 二级模式面板 + 与设置页同语义 ----------
+test('ENH-FLOW wiring: ▾ 菜单「模式切换」一级行 + 二级模式面板（同源文案 + 自定义模板标签 + 档位重置）', () => {
+  const menu = decodeChunk('src/client/components/enhance-menu.js');
+  const i18n = decodeChunk('src/client/i18n.js');
+  // 一级第 4 行：行内当前模式短标签（与输入框主键 ✨ 后同源同文案）+ ›，点击下钻
+  assert.ok(menu.includes("t('menuMode')"), '缺「模式切换」行/面板标题 i18n 键');
+  assert.ok(menu.includes("drillTo('mode')"), '一级行未接线下钻（drillTo mode）');
+  assert.ok(menu.includes('modeShortLabel(t, cfg.mode)'), '行内值必须取模式短标签（与主键标签同源）');
+  assert.ok(menu.includes('MODE_VALUES.indexOf(cfg.mode)'), '下钻落点必须定位当前模式行');
+  // 二级面板：MODE_OPTIONS 全量（5 内置模式）+ 模式全称 + ✓ 当前 + 自定义模板名标签
+  assert.ok(menu.includes('for (const m of MODE_OPTIONS)'), '二级面板必须遍历 MODE_OPTIONS');
+  assert.ok(menu.includes('modeLabel(t, m.value)'), '面板行必须用模式全称（与设置页下拉同源）');
+  assert.ok(menu.includes('customPickIndex(modePick)') && menu.includes('dsh-enh-menu-tag'), '「用户自定义」模式的可辨识标签接线缺失');
+  // 与设置页 ParamsTab onChange 同语义：写 config.mode + 重置该模式默认档位（params 三项 + budgetChars）
+  assert.ok(menu.includes('MODE_PARAMS_DEFAULT[next]') && menu.includes('MODE_BUDGET_DEFAULT[next]'), '切模式必须重置该模式默认档位（与设置页同语义）');
+  assert.ok(/mode: next,[\s\S]{0,400}params: \{/.test(menu), '切模式必须经 saveConfig 单点写入 mode + params');
+  // 一级行序镜像（努力程度行隐藏时行号漂移 → 返回高亮归位按 key 查）
+  assert.ok(menu.includes('rootKeysRef.current = showEffortRow'), '一级行序镜像缺失（返回归位会错位）');
+  assert.ok(menu.includes("'mode'") && menu.includes('paneRef.current'), '新增 pane 档位必须纳入 pane 镜像');
+  // 联动：i18n 双语键齐备（S-7 全量平衡之外的单点锚）
+  assert.ok(i18n.includes("menuMode: '模式切换'") && i18n.includes("menuMode: 'Mode'"), 'menuMode 缺 ZH/EN 之一');
+});
+
