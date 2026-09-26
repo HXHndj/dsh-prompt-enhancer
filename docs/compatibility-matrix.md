@@ -126,7 +126,8 @@
 | 3.0.0（重构目标） | `protocolVersion: 1` | `protocolVersion: 1` | 显式协商 |
 | 3.2.x | `protocolVersion: 1` | 0.1.12+（内容哈希重建） | update/portRestart 独立化（服务模式 schtasks / 默认模式脚本）；执行器专注一键更新/watchdog（该 RPC 与 watchdog 已于 3.3.x 之后的迭代退役，此处仅作历史版本对照） |
 | 3.3.x – 3.4.0 | `protocolVersion: 1` | 0.1.12+（内容哈希重建） | v3.3.3 起执行器副本同步 `undici` 依赖（缺失时代理能力降级为直连，进程不崩）；`update/serviceInstall` 已移除（不再提供 nssm 服务化安装入口）；**插件内重启能力退役**——`update/portRestart` / `update/makeShortcut`、执行器 `restart` 方法、watchdog 与维护救援 CLI 全部移除；新增 `update/install`（安装已下载的 staged 包），**装完提示手动重启 DSH 生效** |
-| 3.5.0（当前） | `protocolVersion: 1` | 0.1.12+（内容哈希重建） | **BREAKING：语音识别（🎤）整体移除**（DSH 官方桌面端已内置，插件内重复实现剥离）——`voice/*` 共 10 条 RPC 连同 schema 下线，线上注册面 34 → **24** 条（即 §2 现行清单）；语音模型下载代理（`download.proxy` 配置）与设置页「语音识别」段落一并移除；安装/更新事实源迁移至 fork 仓库 `HXHndj/dsh-prompt-enhancer`；✨ 提示词增强不受影响 |
+| 3.5.0 | `protocolVersion: 1` | 0.1.12+（内容哈希重建） | **BREAKING：语音识别（🎤）整体移除**（DSH 官方桌面端已内置，插件内重复实现剥离）——`voice/*` 共 10 条 RPC 连同 schema 下线，线上注册面 34 → **24** 条（即 §2 现行清单）；语音模型下载代理（`download.proxy` 配置）与设置页「语音识别」段落一并移除；安装/更新事实源迁移至 fork 仓库 `HXHndj/dsh-prompt-enhancer`；✨ 提示词增强不受影响 |
+| 3.5.1（当前） | `protocolVersion: 1` | 0.1.12+（内容哈希重建） | **模型配置单选化**（客户端行为变更，host RPC 面与配置 schema 零改动）：设置页「模型配置」由多模型队列改为单选卡片（逐行分层布局，「上移/下移」退役），界面恒写长度 1 的 `fallback` 数组；模型来源 = `models/list` 的 DSH 已配置模型 + 内置候选；失败原因分类提示（连接/超时/模型不存在/凭证额度等，行内测试与增强错误条两路）；旧多模型配置仅显示收敛提示、不做加载时自动改写 |
 
 兼容策略：
 
