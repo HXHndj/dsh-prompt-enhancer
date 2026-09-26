@@ -33,7 +33,6 @@ function buildClient() {
   const updaterCardChunk = require('../src/client/components/updater-card.js');
   const pluginsSectionChunk = require('../src/client/components/plugins-section.js');
   const marqueeSelectChunk = require('../src/client/components/marquee-select.js');
-  const collapsibleSectionChunk = require('../src/client/components/collapsible-section.js');
   const modelMainSectionChunk = require('../src/client/components/model-main-section.js');
   const fallbackRowChunk = require('../src/client/components/fallback-row.js');
   const modelConfigTabChunk = require('../src/client/components/model-config-tab.js');
@@ -57,7 +56,6 @@ function buildClient() {
     ['// @dsh-client-comp-updater-card-inject\n', updaterCardChunk],
     ['// @dsh-client-comp-marquee-select-inject\n', marqueeSelectChunk],
     ['// @dsh-client-comp-plugins-section-inject\n', pluginsSectionChunk],
-    ['// @dsh-client-comp-collapsible-section-inject\n', collapsibleSectionChunk],
     ['// @dsh-client-comp-model-main-section-inject\n', modelMainSectionChunk],
     ['// @dsh-client-comp-fallback-row-inject\n', fallbackRowChunk],
     ['// @dsh-client-comp-model-config-tab-inject\n', modelConfigTabChunk],

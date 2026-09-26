@@ -19,6 +19,8 @@ AGENTS.md
 docs/devref/
 
 # ---- 临时与系统文件 ----
+# 截图产物（验收/问题留档，本地工具输出，不入仓）
+shots/
 *.log
 *.tmp
 *.bak
