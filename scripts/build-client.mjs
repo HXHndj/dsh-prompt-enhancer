@@ -29,6 +29,7 @@ function buildClient() {
   const helpersChunk = require('../src/client/helpers.js');
   const modelHelpersChunk = require('../src/client/model-helpers.js');
   const enhanceButtonChunk = require('../src/client/components/enhance-button.js');
+  const enhanceMenuChunk = require('../src/client/components/enhance-menu.js');
   const enhanceBarChunk = require('../src/client/components/enhance-bar.js');
   const updaterCardChunk = require('../src/client/components/updater-card.js');
   const pluginsSectionChunk = require('../src/client/components/plugins-section.js');
@@ -52,6 +53,7 @@ function buildClient() {
     ['// @dsh-client-helpers-inject', helpersChunk],
     ['// @dsh-client-model-helpers-inject', modelHelpersChunk],
     ['// @dsh-client-comp-enhance-button-inject\n', enhanceButtonChunk],
+    ['// @dsh-client-comp-enhance-menu-inject\n', enhanceMenuChunk],
     ['// @dsh-client-comp-enhance-bar-inject\n', enhanceBarChunk],
     ['// @dsh-client-comp-updater-card-inject\n', updaterCardChunk],
     ['// @dsh-client-comp-marquee-select-inject\n', marqueeSelectChunk],

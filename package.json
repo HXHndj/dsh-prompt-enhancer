@@ -1,6 +1,6 @@
 {
   "name": "dsh-prompt-enhancer",
-  "version": "3.5.2",
+  "version": "3.5.3",
   "description": "DeepSeek Harness (DSH) plugin: one-click prompt enhancement (✨) for the composer",
   "main": "lib/index.cjs",
   "type": "commonjs",

@@ -154,3 +154,58 @@ test('ENH-FLOW wiring: helpers 完成分支三路持久化调用齐备', () => {
     assert.ok(h.includes(marker), 'helpers 缺持久化接线标记: ' + marker);
   }
 });
+
+// ---------- v3.6.0 分裂按钮（用户拍板）：空输入禁用 + ▾ 菜单接线契约 ----------
+test('ENH-FLOW wiring: 空输入主键禁用置灰（「空输入点击=切记忆」隐藏功能删除，记忆开关迁移 ▾ 菜单）', () => {
+  const btn = decodeChunk('src/client/components/enhance-button.js');
+  // 旧行为必须清空
+  assert.equal(btn.includes('saveConfig({ memory: !configState.value.memory })'), false, '空输入点击切记忆必须删除');
+  assert.equal(btn.includes('titleMemoryOn'), false, 'titleMemoryOn 死键引用必须清空');
+  assert.equal(btn.includes('titleMemoryOff'), false, 'titleMemoryOff 死键引用必须清空');
+  // 新行为：空输入 = disabled + 置灰类 + 新提示键
+  assert.ok(btn.includes('disabled = true;'), '空输入必须 disabled');
+  assert.ok(btn.includes('dsh-enh-btn-empty'), '空输入必须携带置灰类（styles 已定义 .dsh-enh-btn-empty）');
+  assert.ok(btn.includes("t('titleEmptyInput')"), '空输入 title 必须用新键 titleEmptyInput');
+  // 分裂按钮组装 + 主键状态机保留
+  assert.ok(btn.includes('dsh-enh-split'), '必须渲染 [主键][▾] 组合体容器');
+  assert.ok(btn.includes('EnhanceMenu'), '必须装配 EnhanceMenu 菜单组件');
+  assert.ok(btn.includes("main = React.createElement('button'"), '主键状态机产物必须经 main 变量（enhancing/result/idle 三态共用）');
+  assert.ok(btn.includes('setActiveSession(sessionId)'), '主键活动会话登记保留（既有接线契约）');
+  assert.ok(btn.includes('inputActionsRef'), '主键 actions ref 保留（既有接线契约）');
+});
+test('ENH-FLOW wiring: ▾ 菜单 chunk 锚点（数据同源设置页 + 写同一 fallback[0] + 交互契约）', () => {
+  const menu = decodeChunk('src/client/components/enhance-menu.js');
+  // 数据同源：models/list providers + buildCandidates 候选（与设置页 ModelConfigTab 同源）
+  assert.ok(menu.includes("host.call('models/list')"), '菜单模型数据必须经 models/list（与设置页同源）');
+  assert.ok(menu.includes('buildCandidates('), '候选必须经 buildCandidates（与设置页同源）');
+  // 思考等级：models/resolve 能力表驱动 + F1 纠偏 legacy 门控
+  assert.ok(menu.includes("'models/resolve'"), '思考等级必须由 models/resolve 能力表驱动');
+  assert.ok(menu.includes('noCache'), '已启用思考条目须 noCache 取新鲜能力表（F1 同款）');
+  assert.ok(menu.includes('!legacy'), 'resolve 纠偏必须经 legacy 门控（fallback.length>1 不静默改写）');
+  // 状态写回：全部经 saveConfig 写 fallback[0]（与设置页同一状态、双向同步）
+  assert.ok(menu.includes('subscribeConfig('), '菜单必须订阅 configState（与设置页互相同步）');
+  assert.ok((menu.match(/fallback: \[\{/g) || []).length >= 3, '模型选择/纠偏/思考等级写回都必须落 fallback[0]');
+  // 菜单行：记忆开关行（第一行）+ 增强模型区 + 思考等级区
+  assert.ok(menu.includes("t('menuMemory')"), '缺记忆开关行');
+  assert.ok(menu.includes("t('menuModels')"), '缺增强模型区头');
+  assert.ok(menu.includes("t('menuEffort')"), '缺思考等级区头');
+  // 交互：Escape / 点击外部关闭、↑/↓ 行间移动、Enter/Tab 选定
+  for (const key of ["'Escape'", "'ArrowDown'", "'ArrowUp'", "'Enter'", "'Tab'", "'mousedown'"]) {
+    assert.ok(menu.includes(key), '菜单缺交互接线: ' + key);
+  }
+  // 菜单不放「立即优化」动作行（主键即优化）；失败提示不进菜单
+  assert.equal(menu.includes('enhance('), false, '菜单不得携带优化动作（主键即优化）');
+  assert.equal(menu.includes('errorKey'), false, '失败分类提示必须走 EnhanceBar 错误条，不进菜单');
+  // v3.6.0 评审修复回归锚点：开合驱动必须存在（旧缺陷：onClick 恒 close + 菜单无条件渲染 → 常驻展开遮挡输入区）
+  assert.ok(menu.includes('setOpen((v) => !v)'), '触发器必须切换 open（防「常驻展开」回归）');
+  assert.ok(menu.includes("open ? React.createElement('div', { className: 'dsh-enh-menu'"), '菜单面必须按 open 条件渲染（关闭态不挂载 .dsh-enh-menu）');
+  assert.ok(menu.includes("'aria-expanded': open ? 'true' : 'false'"), 'aria-expanded 必须绑定 open（不得硬编码）');
+  assert.ok(menu.includes('if (!open) return;'), '键盘处理关闭态必须放行（触发器保留原生开合）');
+  // v3.6.0 评审修复(d)(minor) 锚点：fresh 首开继承 / 空组跳过 / 不预高亮
+  assert.ok(menu.includes("'models/current'"), 'fresh profile 首开必须经 models/current 继承 fallback[0]（否则模型行无 ✓）');
+  assert.ok(menu.includes('DEFAULT_MODEL_CHAIN[0]'), '继承无选中/RPC 拒绝必须回退官方默认第一项（与设置页同源）');
+  assert.ok(menu.includes('configState.fresh = false'), '继承写回必须置 fresh=false（设置页不再重复继承）');
+  assert.ok(menu.includes('if (models.length === 0) continue;'), '空提供方组必须跳过子头（对齐 DSH 飞出不渲染空组）');
+  assert.ok(menu.includes('setActiveIdx(-1)'), '打开不得预高亮首行（对齐 DSH——无悬停无高亮）');
+  assert.ok(menu.includes('clampedIdx < 0 ? 0 :'), '↑/↓ 必须兼容 -1 起始（↓ 进首行 / ↑ 进末行）');
+});
