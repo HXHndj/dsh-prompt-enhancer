@@ -26,12 +26,12 @@ DeepSeek Harness (DSH) 插件。**核心能力**：
 ## 🚀 安装
 
 ```sh
-dsh plugin --profile web add github:HXHndj/dsh-prompt-enhancer#v3.5.4
+dsh plugin --profile web add github:HXHndj/dsh-prompt-enhancer#v3.5.5
 ```
 
 安装后重启 DSH（`dsh web`），输入框工具行出现 ✨ 按钮即安装成功。
 
-> ℹ️ **版本说明**：本插件已剥离语音识别（DSH 官方桌面端已内置语音识别），现为**提示词增强（✨）单功能插件**；上方命令已锁定 v3.5.4（含 ✨ 官方槽位契约修复 Issue #8 / #10）。**注意**：v3.4.0 起**移除了插件内重启能力**（更新后请手动重启 DSH）；v3.5.0 **移除语音识别**（`voice/*` RPC 全部下线，BREAKING）；v3.5.1 起模型配置为单选；v3.5.2 设置界面层级化重构；v3.5.3 输入框改分裂按钮（✨ 优化 + ▾ 菜单）；v3.5.4 ▾ 菜单改两级下钻（一级：记忆开关/模型选择/努力程度），详见 [release notes](release-notes/3.5.4.md)。
+> ℹ️ **版本说明**：本插件已剥离语音识别（DSH 官方桌面端已内置语音识别），现为**提示词增强（✨）单功能插件**；上方命令已锁定 v3.5.5（含 ✨ 官方槽位契约修复 Issue #8 / #10）。**注意**：v3.4.0 起**移除了插件内重启能力**（更新后请手动重启 DSH）；v3.5.0 **移除语音识别**（`voice/*` RPC 全部下线，BREAKING）；v3.5.1 起模型配置为单选；v3.5.2 设置界面层级化重构；v3.5.3 输入框改分裂按钮（✨ 优化 + ▾ 菜单）；v3.5.4 ▾ 菜单改两级下钻（一级：记忆开关/模型选择/努力程度）；v3.5.5 三处对齐修复（▾ 箭头归位高亮胶囊中心、「撤销优化 / 继续优化」文字居中、记忆链开/关改原生观感开关控件），详见 [release notes](release-notes/3.5.5.md)。
 >
 > 需本机已装 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 且 `pnpm` 在 PATH 中。
 >

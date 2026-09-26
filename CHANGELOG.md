@@ -1,7 +1,8 @@
 # Changelog
 
 [3.3.3]: https://github.com/Fishsb/dsh-prompt-enhancer/compare/v3.3.2...v3.3.3
-[Unreleased]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v3.5.4...HEAD
+[Unreleased]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v3.5.5...HEAD
+[3.5.5]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v3.5.4...v3.5.5
 [3.5.4]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v3.5.3...v3.5.4
 [3.5.3]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v3.5.2...v3.5.3
 [3.5.2]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v3.5.1...v3.5.2
@@ -18,11 +19,15 @@
 
 > 🗺️ 条目内的 `flow:` 标注为功能链路标签（原 pmg 项目地图 `docs/map/` 已随 pmg 于 2026-09-10 移除，该路径不再存在）；agent 开工前先读 [`AGENTS.md`](AGENTS.md)。
 
-## [Unreleased]
+## [3.5.5] - 2026-09-26
 
 ### Fixed
 
 - **三处对齐缺陷修复（用户截图指出；仅 client 三件：`components/enhance-button.js` / `components/enhance-menu.js` / `styles.js`——host 侧、RPC 面、设置页、i18n 零改动）** `flow:enhance-ui`：① **▾ 触发器字形不在 hover 高亮胶囊中心**——`.dsh-enh-menu-trigger` 原 `padding:0 6px 0 2px`（左2右6）把 12px 内容盒整体左移，且 inline-flex（继承 `.dsh-enh-btn`）未声明 `justify-content`（默认 flex-start）⇒ 字形贴内容盒左缘；改左右对称 `padding:0 4px` + `justify-content:center`（水平内边距和仍 8px、`min-width:20px` 仍生效 ⇒ 胶囊总宽/位置不变，仅字形归位中心）。② **「撤销优化」「继续优化」文字不在胶囊正中**——`.dsh-enh-btn` 的 `padding:0 8px 0 4px` 是给 ✨ 图标左缘留白的预算，纯文字态（result / continue）因此整体左偏；新增 `.dsh-enh-btn-center{padding:0 6px}`（水平内边距和恒 12px ⇒ 胶囊总宽不变），`enhance-button.js` 在无前导图标的两态挂类（result 分支直接加；idle 分支按 `s.optimized === true` = 继续优化态加）。③ **记忆链 开/关 由纯文字值位改开关控件**——新增 `.dsh-enh-menu-switch` / `.dsh-enh-menu-switch-thumb`，**形态与色板逐项对齐宿主原生 Switch**（app.asar → `dsh-client-ui-primitives/lib/Switch.module.css`：36×20 胶囊轨道 + 2px 内边距 + 16px 圆形滑块 + `translateX(16px)` + 120ms ease + `corner-shape:round` 显式退出全局超椭圆；关 = `--dsw-alias-border-l3`、开 = `--dsw-alias-brand-primary`、滑块 = `--dsw-alias-label-primary-foreground`——三色随主题，与宿主开关同源同观感）；行仍是唯一点击目标（开关 `aria-hidden` 纯视觉指示、点击冒泡到行按钮），状态语义上移到行本身（`role=menuitemcheckbox` + `selected: memoryOn` ⇒ `aria-checked` 如实反映；开关 `data-on` 与行 `aria-checked` 同取 `memoryOn`，视觉与 AT 不会不一致；行渲染器改 `it.role || 'menuitemradio'`）——顺带修正旧实现「记忆行恒 `menuitemradio` + `aria-checked=false`」的失真；旧值位规则 `.dsh-enh-menu-state-on` 随文字值退役删除。**已实测**：`npm test` 236/236 通过 + `npm run gate` 全绿（R1–R4 / RPC 事实源 / prompts / arch-claims 30 通过 0 冲突）；另建独立无头浏览器验收（真实产物 `lib/client.cjs` + 真实 React + 真实 CSS，CDP 盒量测 + 截图像素分析，before/after 双跑）：▾ 字形中心偏移 −2.50px → 0.00px（胶囊 19.5px 不变）、撤销优化 −2.17px → −0.17px、继续优化 −2.08px → −0.08px（胶囊 64.0px 不变）、开关 36×20 / 滑块 16×16 且滑块行程 Δ16.00px（轨道内左 2px → 右 18px）、轨道色关 rgba(255,255,255,.16) → 开 rgb(249,250,251)（border-l3 → brand-primary，随主题）、行 `aria-checked` false→true、菜单保持一级三行展开。
+
+### Changed
+
+- **版本与元数据**：`package.json` + `package-lock.json`（两处）3.5.4 → **3.5.5**，`plugin-host.js` 构建注入同步（205340 bytes，version 3.5.5）；本轮新增源码特性标签注释统一至 v3.5.5（`styles.js` 三处新规则 + `enhance-button.js` 挂类 + `enhance-menu.js` 值位改控件，含外层头注与内层 chunk 头注）。
 
 ## [3.5.4] - 2026-09-26
 
