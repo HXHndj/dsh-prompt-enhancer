@@ -36,3 +36,16 @@ test('RPC-02 派生清单结构锁：24 = 6(lib/index.cjs) + 18(plugin-host.js)�
   assert.ok(m.live.includes('update/install'), 'update/install 在位');
   assert.ok(!m.live.includes('update/portRestart'), '已退役的重启 RPC 不得回流');
 });
+
+// v4.0.0（专家档澄清卡·阶段三核对）：enhance 只校验 sessionId/text，answers/skip 附加字段直通
+//（rpc-schema 免改 schema——计划文档四.7 契约；缺失必填字段仍须拒绝）
+test('RPC-03 enhance 附加字段直通：answers/skip 免改 schema 不被拦截', () => {
+  const libSchema = require('../lib/rpc-schema.cjs');
+  const r = libSchema.validateRpcArgs('enhance', {
+    sessionId: 's', text: 't', mode: 'expert',
+    answers: [{ q: '「它」指哪个函数？', a: 'parseConfig' }], skip: true,
+  });
+  assert.equal(r.ok, true, 'answers/skip 附加字段不得被 enhance schema 拦截');
+  assert.equal(libSchema.validateRpcArgs('enhance', { sessionId: 's' }).ok, false, '缺 text 仍须拒绝');
+  assert.equal(libSchema.validateRpcArgs('enhance', { text: 't' }).ok, false, '缺 sessionId 仍须拒绝');
+});

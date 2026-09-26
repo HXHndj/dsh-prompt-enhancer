@@ -40,3 +40,5 @@ node_modules/
 dist/
 build/
 *.tgz
+# ZCode 会话工作区（计划/工作流草稿等本机沉淀，不入仓）
+.zcode/

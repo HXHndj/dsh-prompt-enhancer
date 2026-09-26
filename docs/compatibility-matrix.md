@@ -28,7 +28,7 @@
 | `models/current` | client → host | 当前模型 | 只读 |
 | `models/resolve` | client → host | 解析模型 | 只读 |
 | `models/test` | client → host | 连通性测试 | 用户触发 |
-| `models/stats` | client → host | 模型实测统计（扫会话投影聚合 TTFT / tokens-per-second，附 base/lite 预估秒数） | 只读 |
+| `models/stats` | client → host | 模型实测统计（扫会话投影聚合 TTFT / tokens-per-second，附预估秒数：`estimateBase`=直发估算、`estimateLite`=保守上界，字段名沿用 v3） | 只读 |
 | `models/autochain` | client → host | 自适应链 | 只读 |
 | `template/default` | client → host | 默认模板 | 只读 |
 | `update/check` | client → host | 版本检测（local 运行时读运行环境 package.json） | 只读 |
@@ -87,15 +87,15 @@
 
 | key | 类型 | 默认 | 说明 |
 |---|---|---|---|
-| `mode` | string | `base` | 优化模式 |
-| `memory` | boolean | `false` | 记忆开关 |
-| `context.budgetChars` | number | `4000` | 上下文预算 |
-| `timeoutMs` | number | 见代码 | 超时 |
-| `maxTokens` | number | 见代码 | token 上限 |
-| `outputLimit` | number | 见代码 | 输出上限 |
+| `mode` | string | `standard` | 优化模式（v4.0.0 三档：`lite`/`standard`/`expert`；旧值迁移：base→standard、lite→lite、smart/publish→expert、`memory`→lite） |
+| `memory` | boolean | `true` | 记忆流开关（v4.0.0 起默认开启；三值语义——历史显式 `false` 保持关闭） |
+| `context.budgetChars` | number | `4000` | 记忆链总预算（v4.0.0 起全局单选 4000/8000/16000；旧值 0/2000→4000、32000→16000，不再按模式分档） |
+| `timeoutMs` | number | 见代码 | 超时（按档位默认 30s/30s/60s = 轻量/标准/专家） |
+| `maxTokens` | number | 见代码 | token 上限（按档位 2000/2000/4000；推理链自动放宽 ≥8000 不变） |
+| `outputLimit` | number | 见代码 | 输出上限（按档位 8000/8000/16000，超限判失败走下一条模型） |
 | `template.mode` | string | `builtin` | 模板模式（兼容保留；新 UI 以每模式 `pick` 为准） |
 | `template.texts` | object | 内置 | 每模式模板（兼容保留；有 `pick` 时不再参与解析） |
-| `template.pick` | object | 各模式 `default` | 每模式选中模板键：`default`（模板1 现有默认）/ `supplement`（模板2 增量补充完善）/ `dev`（模板3 增量完善·开发向）/ `custom:<index>`（自定义列表条目）；非法/越界回退 `default` |
+| `template.pick` | object | 各模式 `default` | 每模式选中模板键（v4.0.0 单模板体系）：`default`（每档唯一内置模板）/ `custom:<index>`（自定义列表条目）；旧键 increment/supplement/dev 迁移为 `default`，非法/越界回退 `default` |
 | `template.custom` | object | 各模式 `[]` | 每模式自定义模板列表 `[{name, text}]`：≤10 条/模式，`text` ≤4000，`name` ≤40 |
 | `fallback` | array | 内置 | 模型链（v3.6 起 UI 单选：恒写长度 1 数组；host 契约不变，旧多模型配置提示式收敛） |
 | `customModels` | array | `[]` | 自定义模型 |
@@ -132,7 +132,8 @@
 | 3.5.3 | `protocolVersion: 1` | 0.1.12+（内容哈希重建） | **输入框分裂按钮 + ▾ 增强模型菜单**（仅 client 半部，host 零改动、零新 RPC）：`conversation.input.right` 改 `[✨ 主键][▾]` 组合体——主键状态机保留，**空输入主键由「点击=切记忆」改为禁用置灰**（用户可见行为变更），记忆开关迁入 ▾ 菜单；菜单含记忆开关 + 增强模型按提供方分组列表（与设置页同一 `fallback[0]` 通道、双向同步）+ 思考等级（`models/resolve` 能力表）；新增 `enhance-menu.js` chunk（装配链同步）；形态对齐 DSH `ui-model-selection` |
 | 3.5.4 | `protocolVersion: 1` | 0.1.12+（内容哈希重建） | **▾ 菜单两级下钻**（纯呈现层级重构，数据与写入通道零变化）：一级恒三行（记忆开关就地切换 / 模型选择 / 努力程度，行内显示当前值）；模型与努力程度下钻二级面板（返回头 + 分组列表/efforts + ✓）；下钻落当前行、返回落原格、Escape 逐级退出；仍写 `fallback[0]` 与设置页双向同步 |
 | 3.5.5 | `protocolVersion: 1` | 0.1.12+（内容哈希重建） | **三处对齐修复 + 记忆链开关控件**（纯客户端呈现层，host RPC 面与配置 schema 零改动）：▾ 触发器字形归位 hover 高亮胶囊中心（`padding:0 4px` + `justify-content:center`，胶囊总宽不变）；「撤销优化 / 继续优化」纯文字态补 `.dsh-enh-btn-center`（左右 6/6，胶囊总宽不变）；▾ 菜单一级记忆行值位改开关控件（形态/色板对齐宿主原生 Switch：36×20 轨道 + 16px 滑块 + `translateX(16px)`，关 = `border-l3` / 开 = `brand-primary` / 滑块 = `label-primary-foreground`），行 `role=menuitemcheckbox` + `aria-checked` 承载状态 |
-| 3.5.6（当前） | `protocolVersion: 1` | 0.1.12+（内容哈希重建） | **▾ 菜单新增「模式切换」一级行 + 二级模式面板**（纯客户端呈现层扩展，host RPC 面与配置 schema 零改动）：一级第 4 行（行内当前模式短标签 + `›`）→ 二级面板列 `MODE_OPTIONS` 全量 5 模式（全称 + `✓` 当前；选中自定义模板的模式带模板名标签）；选择写 `config.mode` + 该模式默认档位（与设置页 ParamsTab 同语义），经 `subscribeConfig` 联动输入框主键短标签与设置页；返回归位改按 key 查（`rootKeysRef` 行序镜像，努力程度行隐藏时不错位） |
+| 3.5.6 | `protocolVersion: 1` | 0.1.12+（内容哈希重建） | **▾ 菜单新增「模式切换」一级行 + 二级模式面板**（纯客户端呈现层扩展，host RPC 面与配置 schema 零改动）：一级第 4 行（行内当前模式短标签 + `›`）→ 二级面板列 `MODE_OPTIONS` 全量 5 模式（全称 + `✓` 当前；选中自定义模板的模式带模板名标签）；选择写 `config.mode` + 该模式默认档位（与设置页 ParamsTab 同语义），经 `subscribeConfig` 联动输入框主键短标签与设置页；返回归位改按 key 查（`rootKeysRef` 行序镜像，努力程度行隐藏时不错位） |
+| 4.0.0（当前） | `protocolVersion: 1` | 0.1.12+（内容哈希重建） | **BREAKING：三档重构**——五模式收敛为 轻量/标准/专家（默认 standard，T1/T2 双模板由档位吸收，`template.pick` 旧键 increment/supplement/dev→default）；**全部会话/工作区/网络检索下线**（`retrieve` stage 移除，管道 4→3：analyze→assemble→llm；旧 base/smart/publish 模式删除，配置自动迁移 base→standard、smart/publish→expert）；专家档新增**歧义澄清卡**：enhance 请求可选 `answers`（`[{q,a}]`）/`skip` 透传、响应新增 `clarify` 分支（向后兼容，旧 client 不受影响）；草稿以 JSON 证据正文注入（防注入）＋保护 token 纪律；记忆流默认开启（三值语义）；上下文预算收敛为全局 4000/8000/16000（记忆链预算，旧值自动迁移）；运行参数按档位（30/30/60s、2000/2000/4000、8000/8000/16000） |
 
 兼容策略：
 

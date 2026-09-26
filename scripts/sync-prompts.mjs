@@ -27,30 +27,17 @@ const HOST = path.join(ROOT, 'src', 'host', 'app.js');
 const BEGIN = '// ==PROMPTS-BEGIN==';
 const END = '// ==PROMPTS-END==';
 
-// v3.2.23（用户需求·技能集合化）：事实源从平铺 prompts/ 迁移到技能包 skills/enhance/——
-// 常量名映射保持兼容（SYSTEM_PROMPT 等不变，供 enhance-handlers/pure 引用不改名）。
+// v3.2.23（用户需求·技能集合化）：事实源从平铺 prompts/ 迁移到技能包 skills/enhance/。
+// v4.0.0（三档重构）：T1/T2 轴由档位吸收、检索整体移除——NAME_MAP 收敛为 5 项：
+// 三档 system（lite/standard/expert）+ 全局纪律 + 继续优化指令；旧 19 项映射随
+// base/smart/publish、increment、retrieval、task-analysis/smart 尾段的删除一并移除。
 const SKILL_ROOT = 'skills/enhance';
 const NAME_MAP = {
-  'base/system.md': 'SYSTEM_PROMPT',
-  'base/increment.md': 'SYSTEM_INCREMENT_PROMPT',
   'lite/system.md': 'SYSTEM_LITE_PROMPT',
-  'lite/increment.md': 'SYSTEM_INCREMENT_LITE_PROMPT',
   'standard/system.md': 'SYSTEM_STANDARD_PROMPT',
-  'standard/increment.md': 'SYSTEM_INCREMENT_STANDARD_PROMPT',
-  'smart/system.md': 'SYSTEM_SMART_PROMPT',
-  'smart/increment.md': 'SYSTEM_INCREMENT_SMART_PROMPT',
-  'publish/system.md': 'SYSTEM_PUBLISH_PROMPT',
-  'publish/increment.md': 'SYSTEM_INCREMENT_PUBLISH_PROMPT',
-  'retrieval/relevance.md': 'RELEVANCE_PROMPT',
-  // v3.2.24（规则落点 L2）：参考使用规则独立技能文件——retrieve 命中参考块才条件注入（原在 discipline 内无条件）
-  'retrieval/reference-guide.md': 'REFERENCE_GUIDE',
-  'retrieval/intent.md': 'DEV_INTENT_PROMPT',
-  'retrieval/doc-analysis.md': 'DOC_ANALYSIS_PROMPT',
-  'retrieval/websearch.md': 'WEBSEARCH_PLAN_PROMPT',
-  'assemble/task-analysis.md': 'TASK_ANALYSIS_PROMPT',
-  'assemble/continue.md': 'CONTINUE_PROMPT',
-  'assemble/smart.md': 'SMART_TAIL_PROMPT',
+  'expert/system.md': 'SYSTEM_EXPERT_PROMPT',
   'discipline.md': 'DISCIPLINE_PROMPT',
+  'assemble/continue.md': 'CONTINUE_PROMPT',
 };
 
 // 自动发现：扫描技能包内全部 .md（排除 SKILL.md），按相对路径查 NAME_MAP 得常量名；
@@ -109,20 +96,21 @@ function tryJson(v) {
   return v;
 }
 
-// 生成 SKILL_MANIFEST（templates 直接引用同作用域常量）与 SKILL_RETRIEVE_BUDGETS（包级预算表）
+// 生成 SKILL_MANIFEST（templates 直接引用同作用域常量）与 SKILL_RETRIEVE_BUDGETS
+// （v4.0.0：全局记忆链预算档位 4000/8000/16000，不再是按模式检索预算表）
 function buildSkillManifest() {
   const pkg = parseFrontmatter(SKILL_ROOT + '/SKILL.md') || {};
   const modes = Array.isArray(pkg.modes) ? pkg.modes : [];
-  const lines = ['// v3.2.23（技能集合化）：SKILL_MANIFEST 由 skills/enhance/*/SKILL.md frontmatter 生成',
+  const lines = ['// SKILL_MANIFEST 由 skills/enhance/*/SKILL.md frontmatter 生成（v4.0.0 三档，仅 t1 内置模板）',
     'const SKILL_MANIFEST = {'];
   for (const mode of modes) {
     const fm = parseFrontmatter(SKILL_ROOT + '/' + mode + '/SKILL.md');
     if (!fm) throw new Error(mode + '/SKILL.md 缺 frontmatter');
+    // v4.0.0：T2 增量轴废除，每档仅 t1
     const t1 = NAME_MAP[mode + '/system.md'];
-    const t2 = NAME_MAP[mode + '/increment.md'];
     lines.push('  ' + JSON.stringify(mode) + ': { name: ' + JSON.stringify(fm.name || 'enhance-' + mode) +
       ', mode: ' + JSON.stringify(mode) +
-      ', templates: { t1: ' + t1 + ', t2: ' + t2 + ' }' +
+      ', templates: { t1: ' + t1 + ' }' +
       ', retrieve: ' + JSON.stringify(fm.retrieve || { kind: 'none', windows: [] }) +
       // v3.2.24（规则落点 L2/L3）：可选参考源 + 场景触发规则声明（模型按需引入）
       ', sources: ' + JSON.stringify(fm.sources || []) +

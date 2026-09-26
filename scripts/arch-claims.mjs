@@ -151,10 +151,10 @@ const CLAIMS = [
     adr: 'ADR-194', anchor: 'module:prompt-enhancer', at: '2026-09-12', level: '部分兑现',
     promise: '判定「需要架构重构，分期执行、不推倒重写」：①P0 死层退役 + 协议事实源由注册面派生；②P1 host 半部改原生模块；③P2 规范收敛；④P3 待验证',
     assertions: [
-      A('A194-1', '结构', '①P0 死层退役（src/host 收敛）', '7 件 / 33 物理行', () => {
+      A('A194-1', '结构', '①P0 死层退役（src/host 收敛）', '7 件 / 34 物理行（v4.0.0 三档重构后快照，原 P1b-2 为 33）', () => {
         const files = list('src/host');
         const n = files.reduce((a, f) => a + lines(`src/host/${f}`), 0);
-        return assert(files.length === 7 && n === 33, `${files.length} 件 / ${n} 行`);
+        return assert(files.length === 7 && n === 34, `${files.length} 件 / ${n} 行`);
       }),
       A('A194-2', '结构', '①协议事实源改由注册面派生（废除 protocol.js）', 'src/protocol.js 不存在且 scripts/rpc-manifest.mjs 存在', () => {
         const gone = !exists('src/protocol.js');

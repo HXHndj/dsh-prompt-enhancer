@@ -15,8 +15,9 @@ A DeepSeek Harness (DSH) plugin with **one core capability**:
 The ✨ button in the composer toolbar triggers an independent LLM call and rewrites the current draft in place; keep refining, undo anytime, or cancel while enhancing.
 
 - **One-click enhance** — the ✨ button triggers an independent LLM call and replaces the draft; continue refining, undo anytime, cancel while enhancing
-- **5 optimization modes** — Basic (direct) / Lite (previous-round context) / Standard (rules + retrieval) / Expert (task analysis + full retrieval) / One-click Publish (complete dev-spec generator)
-- **Memory switch** — when on, pre-send rounds (optimize → edit → re-optimize) accumulate into a memory chain the next round replays and senses your edit direction; sending the message clears it; when off, nothing is read or written
+- **3 optimization modes (v4.0.0)** — Lite (quick polish, zero additions) / Standard (default: intent & goal recognition + markdown-structured output) / Expert (Standard + gap inventory + ambiguity clarification); custom templates per mode
+- **Expert clarify card** — when the draft has an ambiguity that would materially change the result, a multiple-choice card pops up below the composer (≤3 questions); answer or skip, then the final prompt is generated
+- **Memory stream** — on by default: pre-send rounds (optimize → edit → re-optimize) accumulate into a memory chain the next round replays and senses your edit direction; expert-mode clarify Q&A joins the chain too; sending the message clears it, and the switch state persists
 - **Model** — single-model configuration with optional thinking toggle/level and inline connectivity tests
 
 ## 🔧 Other capabilities
@@ -26,12 +27,12 @@ The ✨ button in the composer toolbar triggers an independent LLM call and rewr
 ## 🚀 Install
 
 ```sh
-dsh plugin --profile web add github:HXHndj/dsh-prompt-enhancer#v3.5.6
+dsh plugin --profile web add github:HXHndj/dsh-prompt-enhancer#v4.0.0
 ```
 
 Restart DSH (`dsh web`) after installing — the ✨ button appears in the composer toolbar.
 
-> ℹ️ **Version note**: speech recognition has been stripped from this plugin (the official DSH desktop app already ships speech recognition), which makes it a **prompt-enhancement (✨) single-feature plugin**; the command above is pinned to v3.5.6 (it includes the ✨ official slot-contract fix, Issue #8 / #10). **Note**: from v3.4.0 the **in-plugin restart capability is removed** (restart DSH manually after an update); v3.5.0 **removes speech recognition** (all `voice/*` RPCs are gone — BREAKING); from v3.5.1 model configuration is single-select; v3.5.2 restructured the settings UI hierarchy; v3.5.3 turned the composer control into a split button (✨ enhance + ▾ menu); v3.5.4 restructures the ▾ menu into two-level drill-down (level 1: memory toggle / model / effort); v3.5.5 fixes three alignment issues (the ▾ glyph now centers in its hover pill, the "undo/continue" text-only buttons center their label, and the memory switch becomes a real toggle matching DSH's native Switch); v3.5.6 adds a "Mode" entry to the ▾ menu (4th level-1 row + a second-level mode panel, switching a mode updates the composer label) — see [release notes](release-notes/3.5.6.md).
+> ℹ️ **Version note**: speech recognition has been stripped from this plugin (the official DSH desktop app already ships speech recognition), which makes it a **prompt-enhancement (✨) single-feature plugin**; the command above is pinned to v4.0.0. **v4.0.0 (BREAKING)**: the five modes collapse into three tiers — **Lite / Standard (default) / Expert**; all session/workspace/web retrieval is removed; the T1/T2 template pair is absorbed by the tiers; an expert-mode ambiguity clarify card and JSON evidence-wrapping (injection hardening) are added; the memory stream is on by default and can be turned off; the context budget becomes a global memory-chain budget (4000/8000/16000); old configs migrate automatically (base→standard, smart/publish→expert, etc.). History: from v3.4.0 the in-plugin restart capability is removed; v3.5.0 removes speech recognition (BREAKING); from v3.5.1 model configuration is single-select; v3.5.3 split button; v3.5.4 two-level ▾ menu; v3.5.6 adds the "Mode" entry to the ▾ menu — see [release notes](release-notes/4.0.0.md).
 >
 > Requires [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) installed locally and `pnpm` in PATH.
 >
@@ -58,6 +59,7 @@ Core logic lives in standalone Node modules, reusable from other scripts: `lib/u
 2. Click the **✨** button
 3. Wait for the independent LLM call; the draft is replaced with the enhanced version
 4. Not satisfied? Click **Undo** to restore the original
+5. In Expert mode, a blocking ambiguity pops a **clarify card** below the composer — "Submit & continue", "Skip & optimize now" (the ambiguity stays as written), or cancel to restore the draft
 
 ## ⚙️ Configuration
 
@@ -66,7 +68,7 @@ Settings → "Models & plugins":
 | Tab | Description |
 |---|---|
 | **Model configuration** | Configure the single optimization model (legacy multi-model queue configs are flagged and converge on your next change) |
-| **Optimization parameters** | Mode / memory switch / context budget / timeout & output limits / templates |
+| **Optimization parameters** | Mode (Lite / Standard / Expert, default Standard) / memory stream (on by default) / context budget (4000/8000/16000, memory-chain budget) / timeout · tokens · output limit (per tier) / templates (one built-in per tier + custom) |
 
 ## 📚 Docs
 

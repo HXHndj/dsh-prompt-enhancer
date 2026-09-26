@@ -1,19 +1,17 @@
 ---
 name: enhance-standard
-description: 标准模式——T1 多轮脉络处理；T2 多轮演进增量。检索：多窗口会话关联（近/中/远三档）。
+description: 标准模式（默认）——意图动词化（开放集合）+ 目标识别（本轮/全局，仅取原文明说的）+ markdown 分段结构化输出。无检索。
 mode: standard
 templates:
   t1: system.md
-  t2: increment.md
 retrieve:
-  kind: rounds
-  windows: [[1, 2], [3, 5], [6, 10]]
-sources: ["session"]
-rules: [{"rule": "reference-guide", "when": "参考块/记忆命中"}]
+  kind: none
+  windows: []
+sources: []
+rules: []
 ---
 
-# 标准模式（standard）
+# 标准模式（standard，默认）
 
-T1（system.md）：多轮脉络处理（近 2 轮 / 3-5 轮 / 6-10 轮三档窗口，逐档 LLM 判定）。
-T2（increment.md）：多轮演进增量（保守补充缺失大逻辑/信息）。
-检索：rounds 窗口 [[1,2],[3,5],[6,10]]（由近及远，命中即停）。
+T1（system.md）：五步法语义重构底盘 + 意图判定（动词化融入任务句，不打标签）+ 目标识别（本轮目标 + 全局目标，仅取原文明说的，全局目标落【背景】段）+ markdown 分段骨架输出（任务/背景/本轮目标/要求/输出，按出现规则省略空段）+ 简单输入门控（短输入保持简短自然语言，不硬套结构）。
+检索：无（kind=none，直发）。
