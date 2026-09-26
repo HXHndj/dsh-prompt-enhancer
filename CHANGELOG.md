@@ -1,7 +1,8 @@
 # Changelog
 
 [3.3.3]: https://github.com/Fishsb/dsh-prompt-enhancer/compare/v3.3.2...v3.3.3
-[Unreleased]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v3.5.2...HEAD
+[Unreleased]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v3.5.3...HEAD
+[3.5.3]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v3.5.2...v3.5.3
 [3.5.2]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v3.5.1...v3.5.2
 [3.5.1]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v3.5.0...v3.5.1
 [3.5.0]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v3.4.0...v3.5.0
@@ -16,7 +17,7 @@
 
 > 🗺️ 条目内的 `flow:` 标注为功能链路标签（原 pmg 项目地图 `docs/map/` 已随 pmg 于 2026-09-10 移除，该路径不再存在）；agent 开工前先读 [`AGENTS.md`](AGENTS.md)。
 
-## [Unreleased]
+## [3.5.3] - 2026-09-26
 
 ### Added
 

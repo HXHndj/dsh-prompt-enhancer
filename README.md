@@ -26,12 +26,12 @@ DeepSeek Harness (DSH) 插件。**核心能力**：
 ## 🚀 安装
 
 ```sh
-dsh plugin --profile web add github:HXHndj/dsh-prompt-enhancer#v3.5.2
+dsh plugin --profile web add github:HXHndj/dsh-prompt-enhancer#v3.5.3
 ```
 
 安装后重启 DSH（`dsh web`），输入框工具行出现 ✨ 按钮即安装成功。
 
-> ℹ️ **版本说明**：本插件已剥离语音识别（DSH 官方桌面端已内置语音识别），现为**提示词增强（✨）单功能插件**；上方命令已锁定 v3.5.2（含 ✨ 官方槽位契约修复 Issue #8 / #10）。**注意**：v3.4.0 起**移除了插件内重启能力**（更新后请手动重启 DSH）；v3.5.0 **移除语音识别**（`voice/*` RPC 全部下线，BREAKING）；v3.5.1 起模型配置为单选；v3.5.2 设置界面层级化重构（优化参数四级布局、导航纯文本、模型配置去折叠），详见 [release notes](release-notes/3.5.2.md)。
+> ℹ️ **版本说明**：本插件已剥离语音识别（DSH 官方桌面端已内置语音识别），现为**提示词增强（✨）单功能插件**；上方命令已锁定 v3.5.3（含 ✨ 官方槽位契约修复 Issue #8 / #10）。**注意**：v3.4.0 起**移除了插件内重启能力**（更新后请手动重启 DSH）；v3.5.0 **移除语音识别**（`voice/*` RPC 全部下线，BREAKING）；v3.5.1 起模型配置为单选；v3.5.2 设置界面层级化重构；v3.5.3 输入框改分裂按钮（✨ 优化 + ▾ 菜单：记忆开关/增强模型切换/思考等级），详见 [release notes](release-notes/3.5.3.md)。
 >
 > 需本机已装 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 且 `pnpm` 在 PATH 中。
 >
