@@ -156,16 +156,25 @@ test('ENH-FLOW wiring: helpers 完成分支三路持久化调用齐备', () => {
 });
 
 // ---------- v3.6.0 分裂按钮（用户拍板）：空输入禁用 + ▾ 菜单接线契约 ----------
-test('ENH-FLOW wiring: 空输入主键禁用置灰（「空输入点击=切记忆」隐藏功能删除，记忆开关迁移 ▾ 菜单）', () => {
+test('ENH-FLOW wiring: 空输入主键 = 可点击开增强设置（禁用态退役；置灰观感与 ▾ 菜单保留）', () => {
   const btn = decodeChunk('src/client/components/enhance-button.js');
+  const menu = decodeChunk('src/client/components/enhance-menu.js');
+  const i18n = decodeChunk('src/client/i18n.js');
   // 旧行为必须清空
   assert.equal(btn.includes('saveConfig({ memory: !configState.value.memory })'), false, '空输入点击切记忆必须删除');
   assert.equal(btn.includes('titleMemoryOn'), false, 'titleMemoryOn 死键引用必须清空');
   assert.equal(btn.includes('titleMemoryOff'), false, 'titleMemoryOff 死键引用必须清空');
-  // 新行为：空输入 = disabled + 置灰类 + 新提示键
-  assert.ok(btn.includes('disabled = true;'), '空输入必须 disabled');
-  assert.ok(btn.includes('dsh-enh-btn-empty'), '空输入必须携带置灰类（styles 已定义 .dsh-enh-btn-empty）');
-  assert.ok(btn.includes("t('titleEmptyInput')"), '空输入 title 必须用新键 titleEmptyInput');
+  // v3.5.7（用户需求·空输入可点击）：空输入不再是禁用态——点击主键开合 ▾ 增强设置菜单
+  assert.equal(btn.includes('disabled = true;'), false, '空输入不得再置 disabled（禁用态已退役）');
+  assert.ok(/if \(empty\) \{[\s\S]{0,500}setMenuOpen\(\(v\) => !v\)/.test(btn), '空输入分支必须接线「点击开合菜单」（setMenuOpen 函数式切换）');
+  assert.ok(btn.includes('dsh-enh-btn-empty'), '空输入仍须携带置灰类（styles 已定义 .dsh-enh-btn-empty）');
+  assert.ok(btn.includes("t('titleEmptyInput')"), '空输入 title 必须用 titleEmptyInput 键');
+  // 受控开合：主键与 ▾ 共用同一状态 + 锚点 ref（点击主键不算点击外部）
+  assert.ok(btn.includes('open: menuOpen') && btn.includes('onOpenChange: setMenuOpen'), '主键必须以受控方式把 open/onOpenChange 传给 EnhanceMenu');
+  assert.ok(btn.includes('ref: mainRef') && btn.includes('anchorRef: mainRef'), '主键必须挂 ref 并作为菜单锚点传入（否则 mousedown 先关 → 菜单关不掉）');
+  assert.ok(menu.includes('const menuControlled = typeof props.onOpenChange') && menu.includes('props.anchorRef && props.anchorRef.current'), '菜单侧缺受控开合/锚点豁免接线');
+  // 空输入提示文案如实说明点击行为（中英双语）
+  assert.ok(i18n.includes("titleEmptyInput: '空输入：点击打开增强设置'") && i18n.includes("titleEmptyInput: 'Empty input — click to open enhancement settings'"), 'titleEmptyInput 文案未同步为「点击打开设置」（ZH/EN）');
   // 分裂按钮组装 + 主键状态机保留
   assert.ok(btn.includes('dsh-enh-split'), '必须渲染 [主键][▾] 组合体容器');
   assert.ok(btn.includes('EnhanceMenu'), '必须装配 EnhanceMenu 菜单组件');

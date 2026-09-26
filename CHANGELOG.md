@@ -20,6 +20,12 @@
 
 > 🗺️ 条目内的 `flow:` 标注为功能链路标签（原 pmg 项目地图 `docs/map/` 已随 pmg 于 2026-09-10 移除，该路径不再存在）；agent 开工前先读 [`AGENTS.md`](AGENTS.md)。
 
+## [Unreleased]
+
+### Changed
+
+- **空输入主键由「禁用置灰」改为「可点击打开 ▾ 增强设置」（用户需求·体验优化；仅 client 三件：`components/enhance-button.js` / `components/enhance-menu.js` + `i18n.js` 文案，`styles.js` 注释——host 侧、RPC 面、配置 schema 零改动）** `flow:enhance-ui`：v3.5.3「空输入 → disabled + 置灰 + 不可点」的行为退役——现在**空输入仍可点击，点击即开合 ▾ 增强设置菜单**（记忆链 / 增强模型 / 思考等级 / 模式切换 四项设置一屏可达，省去「先找 ▾」一步；再次点击收起）。**实现要点**：① 菜单开合状态上提到主键（`EnhanceButton` 持 `menuOpen`），`EnhanceMenu` 改**受控**（`open` + `onOpenChange`；未传时回退内部 state 作防御）——主键与 ▾ 触发器共用同一状态，`aria-expanded` 如实反映；② 新增主键 `ref` 作为菜单**锚点**（`anchorRef`）：外部 mousedown 关闭判定豁免锚点内点击，否则「mousedown 先关 → click 再 toggle 开」会让菜单**永远关不掉**（本轮真机用例专门覆盖）；③ 置灰观感保留（暗示「暂无可优化内容」），但因已非 `disabled`，基础规则 `.dsh-enh-btn:hover:not(:disabled)` 的 hover 反馈与 `cursor:pointer` 恢复 ⇒ 可点击性可见；④ 空输入 hover 提示改为说明点击行为（`titleEmptyInput`：ZH「空输入：点击打开增强设置」/ EN「Empty input — click to open enhancement settings」）；⑤ 有内容与守卫禁用（斜杠命令等）路径**逐字不变**，仍在原语义下增强或置灰。**已实测**：`npm test` **237/237**（该用例已按新契约重写：空输入不得再 `disabled`、必须接线 `setMenuOpen` 函数式切换 + 受控 props + 锚点 ref + 双语文案）+ `npm run gate` 全绿；无头浏览器验收 **21/21**（真实 `lib/client.cjs` + 真实 CSS，CDP **真实鼠标事件**驱动，脚本与截图留档 `shots/empty-verify.mjs` / `shots/empty-*.png`）：空输入 `disabled=false` / `cursor=pointer` / 置灰色 `rgb(67,69,74)` 保留 / hover 背景 `rgba(255,255,255,0.08)` 恢复；真实点击主键 → 菜单打开且一级 4 行、`aria-expanded=true`；**再次点击主键 → 收起**（锚点豁免生效，否则此项必红）；点击外部关闭、▾ 触发器开合、有内容时点击走增强（result 态且不弹菜单）全部回归通过。
+
 ## [3.5.6] - 2026-09-26
 
 ### Added
