@@ -2140,6 +2140,137 @@ test('V42-39 图标契约（v4.2.1 用户拍板）: 撤回 = 自绘回勾箭头 
   assert.ok(css.includes('.dsh-enh-aux .dsh-enh-aux-icon svg{display:block;width:14px;height:14px}'), '缺副键 SVG 盒规则');
 });
 
+// ================= v4.2.2（副键布局预设 A + 继续优化蓝色态 + 重新优化中性底） =================
+// 用户截图（图一 ⟳ / 图二 ↩，两态副键均处于悬停高亮）指出两处观感缺陷：
+//   ① 「撤销优化 / 重新优化」两枚副键**选中范围不一致**（盒宽 20px vs 22px）、**居中对齐没做好**；
+//   ② 「继续优化」与「撤销优化」形式不统一（一个裸文字、一个状态色胶囊）。
+// 根因与修法见 styles.js v4.2.2 注释；本组把修法钉成契约（形态 + 接线 + 反例）。
+const cssRuleOf = (css, sel) => {
+  const i = css.indexOf(sel + '{');
+  if (i < 0) return null;
+  return css.slice(i + sel.length + 1, css.indexOf('}', i));
+};
+
+test('V422-01 副键选中范围契约: 盒宽与内容解耦（两态同一 28×28 盒）+ 与主键 2px 真实间隙', async () => {
+  const css = decodeChunk('src/client/styles.js');
+  const aux = cssRuleOf(css, '.dsh-enh-aux');
+  assert.ok(aux, '缺 .dsh-enh-aux 规则');
+  // ① 固定盒：width + min-width + height 三者齐备 ⇒ ⟳（字形 advance≈12px）与 ↩（14×14 SVG）不再改变盒宽
+  assert.ok(/width:28px/.test(aux) && /min-width:28px/.test(aux) && /height:28px/.test(aux),
+    '副键必须显式固定 28×28（width + min-width + height 三者齐备）');
+  assert.ok(/(^|;)padding:0(;|$)/.test(aux), 'padding 必须归零——否则盒宽又随内容浮动');
+  assert.equal(/min-width:20px/.test(aux), false, '旧的 min-width:20px（内容驱动盒宽）必须删除');
+  // ② 间隙：旧的 -2px 让副键盒压进主键盒（两高亮区粘连）；改 +2px 真实间隙
+  assert.ok(/margin-right:2px/.test(aux), '与主键盒之间必须是 +2px 真实间隙');
+  assert.equal(/margin-right:-2px/.test(aux), false, '旧的 margin-right:-2px 重叠必须删除');
+  // ③ 形状：固定盒取全圆角，并**显式退出**宿主全局 corner-shape（否则大圆角被超椭圆压成小圆角方块）
+  assert.ok(/border-radius:999px/.test(aux), '固定盒取全圆角（圆形图标键）');
+  assert.ok(/corner-shape:round/.test(aux), '必须显式声明 corner-shape:round（宿主全局为 superellipse(1.5)）');
+  // ④ 图标盒恒定 16×16：⟳ 行盒与 ↩ SVG 共用同一光学盒 ⇒ 两态图标在圆内居中位置一致
+  const icon = cssRuleOf(css, '.dsh-enh-aux .dsh-enh-aux-icon');
+  assert.ok(icon && /width:16px/.test(icon) && /height:16px/.test(icon), '图标容器必须固定 16×16');
+  assert.ok(css.includes('.dsh-enh-aux .dsh-enh-aux-icon svg{display:block;width:14px;height:14px}'),
+    'v4.2.1 的 SVG 盒规则不得改动（图标几何零回归）');
+
+  // ⑤ 渲染级：两态副键元素类名完全一致 ⇒ 盒宽只由 CSS 决定，两态选中范围必然相等
+  const h = loadHelpers({ memory: true, mode: 'standard' });
+  const sid = 'sess-v422-range';
+  h.api.setActiveSession(sid);
+  const inputActions = { setDraft: () => {} };
+  h.hostStub.respond = () => ({ ok: true, text: 'OUTQ' });
+  h.api.enhance(sid, '草稿Q', inputActions, { current: '草稿Q' });
+  await flush();
+  h.api.storeFor(sid).phase = 'idle';
+  const b = loadButtonSpy(h, sid);
+  const redoAux = auxBtnOf(b.render('OUTQ', 'plain'));       // 未改 → ⟳（从零重新优化）
+  const undoAux = auxBtnOf(b.render('OUTQ 改', 'plain'));   // 已改 → ↩（撤销优化）
+  assert.ok(redoAux && undoAux, '两态都必须渲染副键');
+  assert.equal(redoAux.props.className, undoAux.props.className, '两态副键类名必须完全一致（盒宽不由内容决定）');
+  assert.equal(redoAux.props['data-glyph'], 'redo');
+  assert.equal(undoAux.props['data-glyph'], 'undo');
+  assert.equal(classEl(redoAux, 'dsh-enh-aux-icon').props.className,
+    classEl(undoAux, 'dsh-enh-aux-icon').props.className, '两态图标容器类名一致（共用同一 16×16 盒）');
+});
+
+test('V422-02 继续优化蓝色态: 与撤销态逐字同构（仅色相 token 不同），蓝取 state-business-primary', () => {
+  const css = decodeChunk('src/client/styles.js');
+  const cont = cssRuleOf(css, '.dsh-enh-btn-continue');
+  const result = cssRuleOf(css, '.dsh-enh-btn-result');
+  assert.ok(cont, '缺 .dsh-enh-btn-continue');
+  assert.ok(result, '缺 .dsh-enh-btn-result');
+  // ① 同构：把色相 token 归一后两条规则必须**逐字相等**（同一条 6% color-mix 配方）
+  assert.equal(cont.replace(/state-business-primary/g, 'TOKEN'), result.replace(/state-success-primary/g, 'TOKEN'),
+    '继续优化必须与撤销优化逐字同构（仅色相 token 不同）');
+  // ② 蓝 = 宿主自己的蓝色前景 token（深色 #7aaaff / 浅色 #4176e6）
+  assert.ok(cont.includes('color:var(--dsw-alias-state-business-primary)'), '蓝字必须取 state-business-primary');
+  assert.equal(/brand-primary/.test(cont), false,
+    'brand-primary 在本设计系统里是中性色（深色近白 / 浅色近黑），不得当蓝用');
+  // ③ 接线：继续优化态挂类名（且仍带居中类，v3.5.5 契约不回归）
+  const btn = decodeChunk('src/client/components/enhance-button.js');
+  assert.ok(btn.includes("dsh-enh-btn-text dsh-enh-btn-center dsh-enh-btn-continue"),
+    '继续优化态必须挂 dsh-enh-btn-continue（且保留居中类）');
+});
+
+test('V422-03 主键三态类名互斥: 撤销 / 继续 / 重新各挂其一，均保留居中类', async () => {
+  const h = loadHelpers({ memory: true, mode: 'standard' });
+  const sid = 'sess-v422-classes';
+  h.api.setActiveSession(sid);
+  const inputActions = { setDraft: () => {} };
+  h.hostStub.respond = () => ({ ok: true, text: 'OUTC2' });
+  h.api.enhance(sid, '草稿C2', inputActions, { current: '草稿C2' });
+  await flush();
+  h.api.storeFor(sid).phase = 'idle';
+  const b = loadButtonSpy(h, sid);
+  const classesOf = (el) => mainBtnOf(el).props.className;
+  const undoCls = classesOf(b.render('OUTC2', 'plain'));        // 未改 → 撤销优化
+  const contCls = classesOf(b.render('OUTC2 改', 'plain'));     // 已改 + 记忆开 → 继续优化
+  assert.ok(hasClass(mainBtnOf(b.render('OUTC2', 'plain')), 'dsh-enh-btn-result'));
+  assert.ok(hasClass(mainBtnOf(b.render('OUTC2 改', 'plain')), 'dsh-enh-btn-continue'));
+  for (const [name, cls, own, others] of [
+    ['撤销', undoCls, 'dsh-enh-btn-result', ['dsh-enh-btn-continue', 'dsh-enh-btn-redo']],
+    ['继续', contCls, 'dsh-enh-btn-continue', ['dsh-enh-btn-result', 'dsh-enh-btn-redo']],
+  ]) {
+    assert.ok(cls.includes(own), name + '态必须挂 ' + own);
+    for (const o of others) assert.equal(cls.includes(o), false, name + '态不得同时挂 ' + o);
+    assert.ok(cls.includes('dsh-enh-btn-center'), name + '态必须保留居中类（v3.5.5 契约）');
+    assert.ok(cls.includes('dsh-enh-btn-text'), name + '态必须保留文字锚点类');
+  }
+  // 记忆关 → 重新优化（独立 helpers 实例：memory:false 才有「已改 + 记忆关」行）
+  const h2 = loadHelpers({ memory: false, mode: 'standard' });
+  const sid2 = 'sess-v422-classes-off';
+  h2.api.setActiveSession(sid2);
+  h2.hostStub.respond = () => ({ ok: true, text: 'OUTD' });
+  h2.api.enhance(sid2, '草稿D', { setDraft: () => {} }, { current: '草稿D' });
+  await flush();
+  h2.api.storeFor(sid2).phase = 'idle';
+  const b2 = loadButtonSpy(h2, sid2);
+  const redoMain = mainBtnOf(b2.render('OUTD 改', 'plain'));
+  assert.equal(collectText(redoMain).join(''), 'btnRedo', '前置：已改 + 记忆关 → 重新优化');
+  assert.ok(hasClass(redoMain, 'dsh-enh-btn-redo'), '重新优化态必须挂 dsh-enh-btn-redo');
+  assert.equal(hasClass(redoMain, 'dsh-enh-btn-result'), false, '重新优化不得带撤销态类名');
+  assert.equal(hasClass(redoMain, 'dsh-enh-btn-continue'), false, '重新优化不得带继续优化类名');
+  assert.ok(hasClass(redoMain, 'dsh-enh-btn-center'));
+});
+
+test('V422-04 重新优化中性底: label-secondary 6% 淡底（与三态同浓度）+ 禁用面板底色', () => {
+  const css = decodeChunk('src/client/styles.js');
+  const redo = cssRuleOf(css, '.dsh-enh-btn-redo');
+  assert.ok(redo, '缺 .dsh-enh-btn-redo');
+  assert.ok(redo.includes('color:var(--dsw-alias-label-secondary)'), '重新优化 = 灰字（语义不变）');
+  assert.ok(redo.includes('color-mix(in srgb,var(--dsw-alias-label-secondary) 6%,transparent)'),
+    '中性底必须与其余两态同浓度（6% color-mix，深浅主题皆可见）');
+  assert.equal(/bg-layer-[23]/.test(redo), false,
+    '不得用 bg-layer-2/3 作底色——深色主题下正是工具行面板底色（#2c2c2e），会完全看不见');
+  // 三态共用同一条 6% 配方（形式统一是需求 4 的验收点）
+  for (const sel of ['.dsh-enh-btn-result', '.dsh-enh-btn-continue', '.dsh-enh-btn-redo']) {
+    assert.ok(/6%,transparent\)/.test(cssRuleOf(css, sel) || ''), sel + ' 必须走 6% color-mix 淡底');
+  }
+  // 接线：重新优化态挂类名
+  const btn = decodeChunk('src/client/components/enhance-button.js');
+  assert.ok(btn.includes("dsh-enh-btn-text dsh-enh-btn-center dsh-enh-btn-redo"),
+    '重新优化态必须挂 dsh-enh-btn-redo（且保留居中类）');
+});
+
 test('V42-41 result 消费 effect: 用户编辑草稿 ⇒ 消费为 idle + 清结果键；草稿 === backup ⇒ 重新应用结果', () => {
   // ① 草稿既 ≠ enhanced 也 ≠ backup ⇒ 消费结果态（此前该分支触达即 ReferenceError）
   const h = loadHelpers({ memory: true, mode: 'standard' });
@@ -2785,3 +2916,212 @@ test('V42-32 UI 接线: .dsh-enh-split=[aux, main, EnhanceMenu]；main 仍 butto
   const tables = new Function(i18n + ';return { ZH: ZH, EN: EN };')();
   assert.deepEqual(Object.keys(tables.ZH).sort(), Object.keys(tables.EN).sort(), '§3.5：ZH/EN 键集合必须完全相等');
 });
+
+// ================= 多会话隔离审核（audit-2026-09-27·用户反馈「不同会话之间状态互相干扰」） =================
+// 口径：把跨会话链路逐条钉成可复现用例。凡「应有行为」与当前实现不符者标 { todo } —— 红点作为缺陷证据
+// 保留在案（node:test 的 todo 不计失败，npm test 仍全绿）；修复后去掉 todo 即转为正式回归。
+// 每条用例都打印 [审核] 行：实测值 + 预期，便于审核报告直接引用。
+const auditNote = (id, observed, expect) => {
+  console.log('  [审核] ' + id + ' 实测: ' + observed + (expect ? '\n         预期: ' + expect : ''));
+};
+const hostSrcOf = () => JSON.parse('"' + fs.readFileSync(path.join(ROOT, 'src/host/enhance-handlers.js'), 'utf8').match(/module\.exports\s*=\s*"([\s\S]*)";?\s*\n$/)[1] + '"');
+
+test('AUDIT-01 跨会话·在途切换: A 在途时切到 B，A 的结果不得写进 B 的草稿或状态', async () => {
+  const h = loadHelpers({ memory: true, mode: 'standard' });
+  const sidA = 'audit-A1'; const sidB = 'audit-B1';
+  let settle = null;
+  h.hostStub.respond = () => new Promise((r) => { settle = r; });
+  const writesA = [];
+  const b = loadButton(h, sidA, { inputActions: { setDraft: (v) => writesA.push(v) } });
+  h.api.setActiveSession(sidA);
+  const elA = b.render('A 的草稿', 'plain');
+  const sA = h.api.storeFor(sidA); const sB = h.api.storeFor(sidB);
+  mainBtnOf(elA).props.onClick();
+  assert.equal(sA.phase, 'enhancing', 'A 已进入在途');
+  const seqA = sA.seq;
+  b.render('B 的草稿', 'plain', sidB); // 实例复用：只换 sessionId prop（渲染器语义）
+  assert.equal(h.api.getActiveSession(), sidB, '切到 B 后活动会话 = B');
+  settle({ ok: true, text: 'A 的优化结果' });
+  await flush();
+  auditNote('AUDIT-01',
+    'A: phase=' + sA.phase + ' enhanced=' + JSON.stringify(sA.enhanced) + ' 链=' + sA.memoryRounds.length + ' 结果键=' + h.lsBacking.has(RK(sidA))
+    + ' | B: phase=' + sB.phase + ' 链=' + sB.memoryRounds.length + ' 结果键=' + h.lsBacking.has(RK(sidB)) + ' | A 草稿写入=' + JSON.stringify(writesA));
+  assert.deepEqual(writesA, [], 'away 语义：切走后结果只暂存、不注入草稿');
+  assert.equal(sA.phase, 'result');
+  assert.ok(h.lsBacking.has(RK(sidA)), 'A 的结果必须持久化（返回时靠它恢复）');
+  assert.equal(sB.phase, 'idle', 'B 的状态不得被 A 的完成改写');
+  assert.deepEqual(sB.memoryRounds, [], 'B 不得继承 A 的链');
+  assert.equal(h.lsBacking.has(RK(sidB)), false, 'B 不得出现结果键');
+  assert.equal(sA.seq, seqA, 'A 的 seq 不受会话切换影响');
+});
+
+test('AUDIT-02 跨会话·清链触发: B 的草稿「非空→空」只清 B 的链，A 不受影响', () => {
+  const h = loadHelpers({ memory: true, mode: 'standard' });
+  const sidA = 'audit-A2'; const sidB = 'audit-B2';
+  const sA = h.api.storeFor(sidA); const sB = h.api.storeFor(sidB);
+  sA.memoryRounds = [{ input: 'a', output: 'A1' }]; sA.optimized = true; h.api.saveMemoryStore(sidA, sA.memoryRounds);
+  sB.memoryRounds = [{ input: 'b', output: 'B1' }]; sB.optimized = true; h.api.saveMemoryStore(sidB, sB.memoryRounds);
+  const b = loadButton(h, sidB);
+  b.render('B 的草稿', 'plain');
+  b.render('', 'plain'); // 非空→空跳变（手动清空 / 发送成功）
+  auditNote('AUDIT-02', 'B 链=' + sB.memoryRounds.length + '（键=' + h.lsBacking.has(MK(sidB)) + '）B.optimized=' + sB.optimized + ' | A 链=' + sA.memoryRounds.length + '（键=' + h.lsBacking.has(MK(sidA)) + '）A.optimized=' + sA.optimized);
+  assert.deepEqual(sB.memoryRounds, [], 'B 自己的链被清');
+  assert.equal(sB.optimized, false);
+  assert.equal(sA.memoryRounds.length, 1, 'A 的链不得被 B 的清链触发清掉');
+  assert.equal(sA.optimized, true);
+  assert.ok(h.lsBacking.has(MK(sidA)), 'A 的持久化链键保留');
+});
+
+test('AUDIT-03 跨会话·切模式: 链是会话级产物、档位是全局设置 —— 切档位会清掉*所有*会话的链与澄清记录', () => {
+  const h = loadHelpers({ memory: true, mode: 'standard' });
+  const sidA = 'audit-A3'; const sidB = 'audit-B3'; const sidC = 'audit-C3';
+  const sA = h.api.storeFor(sidA); const sB = h.api.storeFor(sidB);
+  sA.memoryRounds = [{ input: 'a', output: 'A1' }]; sA.optimized = true; sA.clarifyAnswers = [{ q: 'qa', a: 'aa' }];
+  h.api.saveMemoryStore(sidA, sA.memoryRounds); h.lsBacking.set(CK(sidA), JSON.stringify(sA.clarifyAnswers));
+  sB.memoryRounds = [{ input: 'b', output: 'B1' }]; sB.optimized = true; h.api.saveMemoryStore(sidB, sB.memoryRounds);
+  h.lsBacking.set(MK(sidC), JSON.stringify([{ input: 'c', output: 'C1' }])); // 未挂载会话只剩持久化键
+  h.configState.value = Object.assign({}, h.configState.value, { mode: 'expert' });
+  h.fireConfig();
+  auditNote('AUDIT-03', '切模式后 A 链=' + sA.memoryRounds.length + ' B 链=' + sB.memoryRounds.length + ' A 澄清记录=' + sA.clarifyAnswers.length
+    + ' A 澄清键=' + h.lsBacking.has(CK(sidA)) + ' C 持久化链键=' + h.lsBacking.has(MK(sidC)),
+    '链属会话级产物：在 A 里切档位不应清掉 B/C 的链（当前为全局清链，属已文档化行为，但正是用户反馈的「互相干扰」形态之一）');
+  assert.equal(sA.memoryRounds.length, 0, '当前会话被清（预期内）');
+  assert.equal(sB.memoryRounds.length, 0, '现状：其它会话的链一并被清');
+  assert.equal(h.lsBacking.has(MK(sidC)), false, '现状：未挂载会话的持久化链键也被 sweep 掉');
+});
+
+test('AUDIT-04 返回会话·结果回注: 草稿 === backup ⇒ 自动重新应用结果（正确链路）', () => {
+  const h = loadHelpers({ memory: true, mode: 'standard' });
+  const sid = 'audit-A4';
+  const s = h.api.storeFor(sid);
+  s.phase = 'result'; s.backup = '原稿'; s.enhanced = '优化结果'; s.optimized = true;
+  h.lsBacking.set(RK(sid), JSON.stringify({ b: '原稿', e: '优化结果' }));
+  const writes = [];
+  const b = loadButton(h, sid, { inputActions: { setDraft: (v) => writes.push(v) } });
+  b.render('原稿', 'plain'); // 宿主回灌的是原文 ⇒ 应自动回注结果
+  auditNote('AUDIT-04', '草稿写入=' + JSON.stringify(writes) + ' phase=' + s.phase + ' 结果键=' + h.lsBacking.has(RK(sid)));
+  assert.deepEqual(writes, ['优化结果'], '原文回灌 ⇒ 自动重新应用结果');
+  assert.equal(s.phase, 'result');
+  assert.ok(h.lsBacking.has(RK(sid)));
+});
+
+test('AUDIT-05 返回会话·结果丢失: 首帧草稿尚未回灌（空/不一致）⇒ 暂存结果被静默丢弃', { todo: '缺陷待修：away 期间的结果不应因返回首帧草稿未回灌而丢弃' }, () => {
+  const h = loadHelpers({ memory: true, mode: 'standard' });
+  const sid = 'audit-A5';
+  const s = h.api.storeFor(sid);
+  s.phase = 'result'; s.backup = '原稿'; s.enhanced = '优化结果'; s.optimized = true;
+  h.lsBacking.set(RK(sid), JSON.stringify({ b: '原稿', e: '优化结果' }));
+  const writes = [];
+  const b = loadButton(h, sid, { inputActions: { setDraft: (v) => writes.push(v) } });
+  b.render('', 'plain'); // 切回会话的首帧：宿主还没把草稿回灌
+  auditNote('AUDIT-05', '首帧空草稿 ⇒ phase=' + s.phase + ' enhanced=' + JSON.stringify(s.enhanced) + ' 结果键=' + h.lsBacking.has(RK(sid))
+    + ' 草稿写入=' + JSON.stringify(writes));
+  b.render('原稿', 'plain'); // 第二帧才回灌原文：此时结果已被丢弃
+  auditNote('AUDIT-05b', '第二帧回灌原文后 草稿写入=' + JSON.stringify(writes) + '（已无法回注）phase=' + s.phase + ' optimized=' + s.optimized + ' 链=' + s.memoryRounds.length);
+  assert.equal(s.phase, 'result', '结果应保留：等草稿回灌后再回注（或至少不清结果键）');
+  assert.ok(h.lsBacking.has(RK(sid)), '结果键不得被丢弃');
+});
+
+test('AUDIT-06 在途 + 切模式: 清链后到达的在途结果会把链重新写回（轨迹「复活」）', { todo: '待裁定：清链语义是否应压过在途结果' }, async () => {
+  const h = loadHelpers({ memory: true, mode: 'standard' });
+  const sid = 'audit-A6';
+  let settle = null;
+  h.hostStub.respond = () => new Promise((r) => { settle = r; });
+  const b = loadButton(h, sid, { inputActions: { setDraft: () => {} } });
+  h.api.setActiveSession(sid);
+  const s = h.api.storeFor(sid);
+  s.memoryRounds = [{ input: '早轮', output: '早结果' }]; s.optimized = true; h.api.saveMemoryStore(sid, s.memoryRounds);
+  const el = b.render('新草稿', 'plain');
+  mainBtnOf(el).props.onClick();
+  assert.equal(s.phase, 'enhancing');
+  h.configState.value = Object.assign({}, h.configState.value, { mode: 'expert' });
+  h.fireConfig(); // 清链（全局）
+  assert.deepEqual(s.memoryRounds, [], '清链先发生');
+  settle({ ok: true, text: '在途结果' });
+  await flush();
+  auditNote('AUDIT-06', '在途结果到达后 链=' + s.memoryRounds.length + ' optimized=' + s.optimized + ' 链键=' + h.lsBacking.has(MK(sid)));
+  assert.equal(s.memoryRounds.length, 0, '被清掉的轨迹不应因在途结果而复活');
+});
+
+test('AUDIT-07 实例复用: 同一实例 A→B，B 的渲染只反映 B；A 的状态不被 B 的操作改动', () => {
+  const h = loadHelpers({ memory: true, mode: 'standard' });
+  const sidA = 'audit-A7'; const sidB = 'audit-B7';
+  const sA = h.api.storeFor(sidA);
+  sA.phase = 'result'; sA.backup = 'A原稿'; sA.enhanced = 'A结果'; sA.optimized = true;
+  sA.memoryRounds = [{ input: 'A原稿', output: 'A结果' }];
+  const b = loadButton(h, sidA);
+  const elA = b.render('A结果', 'plain');
+  const textsA = collectText(mainBtnOf(elA));
+  const auxA = auxGlyphOf(elA);
+  const elB = b.render('B草稿', 'plain', sidB);
+  const textsB = collectText(mainBtnOf(elB));
+  auditNote('AUDIT-07', 'A 主键=' + JSON.stringify(textsA) + ' 副键=' + auxA + ' | B 主键=' + JSON.stringify(textsB) + ' 副键=' + JSON.stringify(auxGlyphOf(elB))
+    + ' | A 状态 phase=' + sA.phase + ' enhanced=' + JSON.stringify(sA.enhanced) + ' 链=' + sA.memoryRounds.length);
+  assert.ok(textsA.includes('result'), 'A：主键=撤销优化');
+  assert.equal(auxA, '⟳', 'A：副键 = 从零重新优化');
+  assert.ok(textsB.includes('✨'), 'B（首次态）：主键 = ✨ + 模式标签');
+  assert.equal(auxBtnOf(elB), undefined, 'B 不得渲染副键');
+  assert.equal(sA.phase, 'result', 'A 的状态不被 B 的渲染改动');
+  assert.equal(sA.enhanced, 'A结果');
+  assert.equal(sA.memoryRounds.length, 1);
+});
+
+test('AUDIT-09 卸载回收: idle+optimized（记忆关·结果已消费）⇒ store 被回收，再进入回「首次」态（状态丢失·现状记录）', () => {
+  const h = loadHelpers({ memory: false, mode: 'lite' });
+  const sid = 'audit-A9';
+  const s = h.api.storeFor(sid);
+  s.phase = 'idle'; s.optimized = true; s.enhanced = ''; s.backup = '原稿'; s.memoryRounds = [];
+  h.api.releaseStoreIfIdle(sid);
+  const again = h.api.storeFor(sid);
+  auditNote('AUDIT-09', '回收后重建：同对象=' + (again === s) + ' optimized=' + again.optimized + ' phase=' + again.phase + ' 链=' + again.memoryRounds.length,
+    '记忆关场景下 optimized 无持久化载体（结果键已消费、链为空）⇒ 「重新优化」入口在切走再回来后退化为「首次」（现状记录，低危）');
+  assert.notEqual(again, s, 'idle 且无监听者的 store 会被回收');
+  assert.equal(again.optimized, false, '现状：optimized 丢失（无持久化载体）');
+});
+
+test('AUDIT-10 并发会话·seq 隔离: A/B 各自 seq=1 在途，取消 B 不影响 A（host 按 (sessionId, seq) 定位）', async () => {
+  const h = loadHelpers({ memory: true, mode: 'standard' });
+  const sidA = 'audit-A10'; const sidB = 'audit-B10';
+  h.hostStub.respond = () => new Promise(() => {}); // 两笔请求都保持挂起
+  const bA = loadButton(h, sidA, { inputActions: { setDraft: () => {} } });
+  h.api.setActiveSession(sidA);
+  mainBtnOf(bA.render('A 草稿', 'plain')).props.onClick();
+  const bB = loadButton(h, sidB, { inputActions: { setDraft: () => {} } });
+  h.api.setActiveSession(sidB);
+  mainBtnOf(bB.render('B 草稿', 'plain')).props.onClick();
+  const sA = h.api.storeFor(sidA); const sB = h.api.storeFor(sidB);
+  const seqA = sA.seq; const seqB = sB.seq;
+  mainBtnOf(bB.render('B 草稿', 'plain')).props.onClick(); // enhancing 态点击 = 取消
+  const cancels = h.hostStub.calls.filter((c) => c.method === 'cancel');
+  const hostSrc = hostSrcOf();
+  auditNote('AUDIT-10', 'seqA=' + seqA + ' seqB=' + seqB + ' cancel=' + JSON.stringify(cancels.map((c) => c.args))
+    + ' | 取消后 A=' + sA.phase + ' B=' + sB.phase
+    + ' | host 定位键=' + (hostSrc.includes('requestKey(sessionId, seq)') ? 'requestKey(sessionId, seq)' : '未找到'));
+  assert.equal(cancels.length, 1, '只取消 B 一笔');
+  assert.equal(cancels[0].args.sessionId, sidB);
+  assert.equal(cancels[0].args.seq, seqB);
+  assert.equal(sB.phase, 'idle', 'B 被取消');
+  assert.equal(sA.phase, 'enhancing', 'A 的在途请求不受 B 的取消影响');
+  assert.ok(hostSrc.includes('markAndAbort(requestKey(sessionId, seq)'), 'host cancel 必须按 (sessionId, seq) 定位');
+  assert.ok(hostSrc.includes('pending.get(requestKey(sessionId, seq))'), 'host progress 必须按 (sessionId, seq) 定位');
+});
+
+test('AUDIT-12 跨会话·澄清态: A 澄清中切到 B，B 不得看到 A 的题；A 的题保留可续答', () => {
+  const h = loadHelpers({ memory: true, mode: 'expert' });
+  const sidA = 'audit-A12'; const sidB = 'audit-B12';
+  const sA = h.api.storeFor(sidA);
+  sA.phase = 'clarify'; sA.clarify = [{ q: 'A 的歧义', kind: 'ambiguity' }]; sA.backup = 'A 草稿';
+  const b = loadButton(h, sidA);
+  const elA = b.render('A 草稿', 'plain');
+  const elB = b.render('B 草稿', 'plain', sidB);
+  const sB = h.api.storeFor(sidB);
+  auditNote('AUDIT-12', 'A clarify=' + sA.clarify.length + ' phase=' + sA.phase + ' 主键=' + JSON.stringify(collectText(mainBtnOf(elA)))
+    + ' | B clarify=' + sB.clarify.length + ' phase=' + sB.phase + ' 主键=' + JSON.stringify(collectText(mainBtnOf(elB))));
+  assert.ok(collectText(mainBtnOf(elA)).includes('btnClarify'), 'A：主键 = 等待作答');
+  assert.equal(sB.phase, 'idle', 'B 不得继承 A 的澄清态');
+  assert.deepEqual(sB.clarify, []);
+  assert.deepEqual(collectText(mainBtnOf(elB)), ['✨', 'expert'], 'B：首次态主键');
+  assert.equal(sA.phase, 'clarify', 'A 的澄清态保留');
+  assert.equal(sA.clarify.length, 1);
+});
+

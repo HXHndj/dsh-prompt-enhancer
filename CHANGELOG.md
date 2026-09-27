@@ -1,7 +1,8 @@
 # Changelog
 
 [3.3.3]: https://github.com/Fishsb/dsh-prompt-enhancer/compare/v3.3.2...v3.3.3
-[Unreleased]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v4.2.1...HEAD
+[Unreleased]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v4.2.2...HEAD
+[4.2.2]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v4.2.1...v4.2.2
 [4.2.1]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v4.2.0...v4.2.1
 [4.2.0]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v4.1.1...v4.2.0
 [4.1.1]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v4.1.0...v4.1.1
@@ -27,6 +28,14 @@
 > 🗺️ 条目内的 `flow:` 标注为功能链路标签（原 pmg 项目地图 `docs/map/` 已随 pmg 于 2026-09-10 移除，该路径不再存在）；agent 开工前先读 [`AGENTS.md`](AGENTS.md)。
 
 ## [Unreleased]
+
+## [4.2.2] - 2026-09-27
+
+### Changed
+
+- **副键布局重排：固定 28×28 圆形，两态「选中范围」完全一致（预设 A）+ 图标居中 + 2px 真实间隙** `flow:enhance-ui`：用户截图指出「撤销优化 / 重新优化」两枚副键**选中范围不一致、居中对齐没做好**。根因在样式层：`.dsh-enh-aux{height:28px;min-width:20px;padding:0 4px;margin-right:-2px;border-radius:24px}` 令**盒宽随内容浮动**——⟳ 是字体字形（advance≈12px）⇒ 盒宽 **20px**、↩ 是 v4.2.1 新加的内联 SVG（14×14）⇒ 盒宽 **22px**，两态 hover/点击范围相差 2px、图标中心到主键文字的墨迹距离随之差 1px；`margin-right:-2px` 还把副键盒压进主键盒 2px（两个高亮区粘连、副键 hover 被主键胶囊左端压住）。修法：`.dsh-enh-aux` 固定 `width/min-width:28px` + `height:28px` + `padding:0` + `display:inline-flex/align-items:center/justify-content:center`（盒宽与内容彻底解耦）、`margin-right` 改 `+2px`（真实间隙 6+2+6=14px）、`border-radius:999px`；图标容器 `.dsh-enh-aux-icon` 固定 16×16 盒（字形 13px 行盒与 14×14 SVG 共用同一光学盒 ⇒ 圆内居中一致，**图标几何零改动**）。**关键配套 `corner-shape:round`**：宿主全局注入 `*,:before,:after{corner-shape:var(--dsw-corner-shape)}` 且 `--dsw-corner-shape: superellipse(1.5)`（源码实测 `app.asar → dsh-client-ui-theme/lib/client.js`），大圆角会被超椭圆压成小圆角方块（实机截图实测：声明的 24px 在 28px 高的主键上只渲染 ≈8px、20px 宽的副键只剩 ≈5px）——副键显式退出全局形状（宿主自家 `Pill`/`Switch` 组件同款做法）后实机计算值为 `superellipse(1)`（= round）。**已实测**：隔离实例实机（临时 `DSH_HOME` + 随机端口，深色主题）两态副键 `getBoundingClientRect` 逐字段相同（`x=772.31 / y=520 / 28×28`）、计算样式 `padding:0` / `margin-right:2px` / `border-radius:999px` / `corner-shape:superellipse(1)`，图标盒两态同为 `16×16 @ x=778.31`，盒间隙 2.00px、图标盒右缘→文字左缘 14.00px；截图 `shots/v422-1-continue-blue.png` / `v422-2-undo-green.png`；单测新增 **V422-01**（盒固定契约：width/min-width/height 齐备 + padding 归零 + 删旧 `min-width:20px` + 2px 间隙 + 删旧 −2px + 全圆角 + `corner-shape:round` + 图标 16×16 + SVG 规则不变 + 两态类名/图标盒一致）。
+- **「继续优化」改蓝字 + 浅蓝底（与「撤销优化」逐字同构）** `flow:enhance-ui`：用户拍板「继续优化与重新优化不是同一个按钮——继续优化改为蓝色文字 + 浅蓝色框，形式与撤销优化保持一致」。新增 `.dsh-enh-btn-continue{color:var(--dsw-alias-state-business-primary);background:color-mix(in srgb,var(--dsw-alias-state-business-primary) 6%,transparent)}`，与既有的 `.dsh-enh-btn-result`（success 绿 + 6%）**同一条配方**、仅换色相；蓝取宿主自己的蓝色**前景** token `--dsw-alias-state-business-primary`（`ui-conversation` 的 composer-editor 引用样式即用它；深色主题 = `deepseek-400 #7aaaff`、浅色主题 = `deepseek-500 #4176e6`）。**刻意避开 `--dsw-alias-brand-primary`**——该 token 在本设计系统里是中性色（深色主题 = `neutral-bluish-50` 近白 / 浅色主题 = `neutral-bluish-1000` 近黑），拿它当蓝会得到一个近白近黑的框。`enhance-button.js` 的继续优化分支补挂类名（行为零改动）。**已实测**：隔离实例实机已改态主键实测 `color: rgb(122,170,255)` + `background: color(srgb 0.478431 0.666667 1 / 0.06)`，几何 64×28 与撤销态逐字段相同；单测新增 **V422-02**（色相 token 归一后与 `.dsh-enh-btn-result` **逐字相等** + 蓝必须是 `state-business-primary` + 禁 `brand-primary` + 接线断言）与 **V422-03**（主键三态类名互斥、均保留 `dsh-enh-btn-center`/`dsh-enh-btn-text`；记忆关渲染级复现「重新优化」）。
+- **「重新优化」（已改 + 记忆流关）补同形中性底（选项 b）** `flow:enhance-ui`：新增 `.dsh-enh-btn-redo{color:var(--dsw-alias-label-secondary);background:color-mix(in srgb,var(--dsw-alias-label-secondary) 6%,transparent)}` ⇒ 三个已优化态统一为「文字 + 淡底」形式，与继续优化/撤销优化同浓度。底色**刻意不用** `bg-layer-2/3`——深色主题下 `bg-layer-2` 正是工具行所在面板底色 `#2c2c2e`（用了会完全看不见），`label-secondary` 的 6% color-mix 在深浅两主题皆可见；hover 仍走既有 `interactive-bg-hover` ⇒ 悬停仍有可见加深（深色 (54,54,56) → (61,61,62)）。**已实测**：隔离实例实机三态胶囊同屏读数（`撤销优化` 绿 / `继续优化` 蓝 / `重新优化` 中性底，几何同为 64×28）+ 截图 `shots/v422-3-three-states.png`；单测新增 **V422-04**（逐字规则 + 与其余两态同浓度 + 禁 `bg-layer-2/3` + 接线断言）。
 
 ## [4.2.1] - 2026-09-27
 
