@@ -7,6 +7,8 @@
 > 复现命令：`node --test test/client-enhance-flow.test.cjs 2>&1 | Select-String '\[审核\]'`
 >
 > **行号约定**：`src/**/*.js` 在仓库里是**单行字符串 chunk**（`module.exports = "…"`），文件本身无行号可言。本文所有 `文件:行号` 均指**解码后（`\r\n`→`\n`）的逻辑行号**，与「第一轮部分引用失准（enhance-button 偏差 ≈22 行、helpers 偏差 0–51 行）」的问题已在本复核轮全部对齐；为防再漂移，关键处同时给出锚点文本（可 `Select-String` 直查）。
+>
+> **处置状态（v4.2.3）**：F1–F10 已全部修复并随 v4.2.3 落地（用户拍板决策与实现要点见 [plan-v4.5-decisions.md](plan-v4.5-decisions.md)，逐条处置与验证用例见文末 **§七**）。本文正文保留为审核时点的证据记录，行号锚点对应修复前代码。
 
 ---
 
@@ -232,3 +234,24 @@ Select-String -Path src/client/constants.js -Pattern 'SEEN_KEY_PREFIX'
 ```
 
 **审核边界（未覆盖的部分）**：① 组件卸载/双实例并存的注入判定只有源码级结论（现有 harness 无卸载钩子，未写成用例；scratch 已补「换 sessionId 触发 cleanup」的最小语义，但仍是单实例驱动）；② 真实宿主渲染器在会话切换时究竟是「复用实例」还是「卸载重建」由宿主决定，本文以「复用实例换 sessionId」为主模型（代码注释与既有用例同此假设），并为「并存」「卸载重建」情形给出 F4/F9 风险；③ 未覆盖多标签页/多窗口同会话并发（同一 `sessionId` 在两个页签各跑一轮，per-store 的 `seq` 各自从 0 开始 ⇒ 可能撞 `sid:seq` 键，需宿主侧 sessionId 唯一性或服务端 seq 生成规则兜底）——**建议纳入下一轮审核**；④ F9 的「bar 先行」顺序取决于宿主槽位 effect 执行序，插件侧无法固定，修复前建议以「两份行为对齐」为验收（而非依赖顺序）。
+
+---
+
+## 七、处置结果（v4.2.3 · 2026-09-27）
+
+> 决策依据与实现细节见 [plan-v4.5-decisions.md](plan-v4.5-decisions.md)；全部改动已实测（`npm test` 290/290 · `npm run gate` 通过 30 · 双 build --check 一致），用户自测后随 v4.2.3 发布。
+
+| 编号 | 处置 | 实现载体 | 验证用例 |
+| :-- | :-- | :-- | :-- |
+| F1 | ✅ 已修：结果消费收敛 `helpers.consumeResult`——瞬态帧（首帧空串/陈旧草稿）**挂起**不消费不删键；第二帧草稿回灌 backup ⇒ 自动回注；真实编辑（非空且 ≠backup/enhanced）维持丢弃+删键（L1 语义不变）；「草稿非空→空」走 `discardResult` 作废挂起结果 | helpers.js（consumeResult/discardResult）+ button/bar 消费 effect | AUDIT-05（转正）、V42-41 |
+| F2 | ✅ 已修（用户拍板：切档只清所在会话）：删除全局清链监听与全前缀 sweep；新增 `applyModeSwitch(sessionId, ...)` = 唯一入口——▾ 菜单传菜单所在会话、设置页传聚焦会话；同值重选不清 | helpers.js + enhance-menu/params-tab/enhance-button | MEM-06（反转）、AUDIT-03（反转）、wiring |
+| F3 | ✅ 已修（用户拍板：应用但不入链）：链世代 `chainEpoch`——清链 +1，完成回调 epoch 不一致时结果照常应用但不写链/不写澄清记录 | helpers.js | AUDIT-06（转正） |
+| F4 | ✅ 已修：删除 `activeSessionId` 注入判定，改实例本地 `livenessRef`（渲染期刷新 + 卸载置 null），`enhance()` 第 7 参；登记收窄为 `focusedSessionId` 仅供设置页切档；死实例闭包问题随之消解 | helpers.js + button/ClarifyPanel | AUDIT-15、AUDIT-01、wiring |
+| F5 | ✅ 已修（用户拍板：持久化）：新键 `dsh-enh-opt:<sid>`——完成应用置位、undo 随链、清链删键、storeFor 恢复白名单新增；回收行为维持 | helpers.js | AUDIT-09（反转）、AUDIT-16 |
+| F6 | ✅ 已修：`menuOpen` 随 `[sessionId]` 复位，切会话即收起 ▾ 菜单 | enhance-button.js | 源码级（useEffect 复位） |
+| F7 | ✅ 已处置：seen 死键族（`dsh.enhance.seen.<sid>`）整体删除（含 constants 前缀与 gate 白名单条目）；`lastDraft` 保留（复核轮已确认有读方，非死状态） | helpers.js/constants.js/dead-code-gate.mjs | 全量回归 |
+| F8 | ✅ 已修：host 三处 sessionId 兜底统一为缺/空 ⇒ `BAD_ARGS`（原 'unknown'/'unknown'/'' 不一致）；progress 合法缺记录仍 NO_RECORD。对外行为变更已随 CHANGELOG [4.2.3] 单列申报 | host/enhance-handlers.js | bundle-smoke/rpc 回归 |
+| F9 | ✅ 已修：两份消费 effect 收敛为 `helpers.consumeResult` 单实现——任意执行顺序行为一致（bar 先行也删键）；残留键复活路径断根 | helpers.js + button/bar | AUDIT-13、wiring |
+| F10 | ✅ 已修：随 F2 消解——config 订阅不再挂清链，启动期磁盘配置同步（或任何程序化 mode 跳变）零清链 | helpers.js（监听删除） | AUDIT-14、MEM-06① |
+
+**遗留（未随本轮处置）**：① 聚焦会话登记双实例并存仍「后挂载者胜」（仅影响设置页切档清哪条链，注入正确性已由 liveness 保障）；② 多标签页/多窗口同会话并发（`sid:seq` 键碰撞）——维持「纳入下一轮审核」。

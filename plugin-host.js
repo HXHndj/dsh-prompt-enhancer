@@ -1356,9 +1356,9 @@ function estimateLiteModeSeconds(ttftMs, tokensPerSecond, inputChars) {
 // 方案「插件版本检测与一键更新方案.md」§1-§3：检测目标 / 版本比较 / 更新流程。
 // 本地版本单一事实源（发布时 bump；client 不另存副本，统一经 update/check 读取）
 // v3.2.1-t（架构调整·版本单一事实源）：PLUGIN_VERSION 由 build-host.mjs 从 package.json 构建注入
-// （'4.2.2' 占位符替换）——源码不再硬编码版本，杜绝「发版忘 bump → 检测永远旧版」漂移。
+// （'4.2.3' 占位符替换）——源码不再硬编码版本，杜绝「发版忘 bump → 检测永远旧版」漂移。
 // 测试/动态形态下占位符未替换 → typeof 未定义 → 回退 0.0.0（仅格式占位，构建产物始终为真实版本）。
-const PLUGIN_VERSION = typeof '4.2.2' !== 'undefined' ? '4.2.2' : '0.0.0';
+const PLUGIN_VERSION = typeof '4.2.3' !== 'undefined' ? '4.2.3' : '0.0.0';
 // 一键拉取的文件清单（发布仓库根目录，raw.githubusercontent.com 按 tag 拉取）
 const UPDATE_MANIFEST = ['plugin-host.js', 'README.md', 'README.en.md', 'cordis.patch.yml'];
 // update/check 结果缓存 TTL（未鉴权 GitHub API 限流 60 次/时）
@@ -2182,7 +2182,12 @@ return {
 
     // v2.3（§7.3）：优化进度轮询 RPC——从 pending Map 读 stage（纯展示，失败静默降级）
     harness.handle('enhance/progress', async (args) => {
+      // v4.2.3（F8·审计处置）：缺/空 sessionId 直接 BAD_ARGS——原兜底 '' 与 enhance/cancel 的
+      // 'unknown' 不一致，匿名请求会共享兜底键 ('',seq)/(unknown,seq) 互相命中 cancel/progress。
+      // 静默容忍 → 报错属对外行为变更（rpc-manifest 治理注记），已随 4.2.3 CHANGELOG 单列申报。
+      // 合法 sessionId 但无在途记录仍返回 NO_RECORD（既有语义）。
       const sessionId = args && typeof args.sessionId === 'string' ? args.sessionId : '';
+      if (sessionId === '') return { ok: false, code: 'BAD_ARGS', message: 'sessionId required' };
       const seq = args && typeof args.seq === 'number' ? args.seq : -1;
       const rec = pending.get(requestKey(sessionId, seq));
       if (!rec) return { ok: false, code: 'NO_RECORD' };
@@ -2560,7 +2565,12 @@ return {
     registerEnhanceStage('llm', enhanceStageLlm, { priority: 100 });
 
     harness.handle('enhance', async (args) => {
-      const sessionId = args && typeof args.sessionId === 'string' ? args.sessionId : 'unknown';
+      // v4.2.3（F8·审计处置）：缺/空 sessionId 直接 BAD_ARGS——原 'unknown' 兜底 ⇒ 所有匿名请求
+      // 共享 (unknown,seq) 键、cancel/progress 可能互相命中，且与 rpc-schema 的
+      // required:['sessionId','text'] 自相矛盾。分发桥（validateRpcArgs）本就先拦一道 MISSING_ARG，
+      // 此处兜底只对绕过分发的直调可达——统一改为显式报错。
+      const sessionId = args && typeof args.sessionId === 'string' ? args.sessionId : '';
+      if (sessionId === '') return { ok: false, code: 'BAD_ARGS', message: 'sessionId required' };
       const seq = args && typeof args.seq === 'number' ? args.seq : -1;
       const text = args && typeof args.text === 'string' ? args.text : '';
       const key = requestKey(sessionId, seq);
@@ -2601,7 +2611,9 @@ return {
     });
 
     harness.handle('cancel', async (args) => {
-      const sessionId = args && typeof args.sessionId === 'string' ? args.sessionId : 'unknown';
+      // v4.2.3（F8·审计处置）：缺/空 sessionId 直接 BAD_ARGS（原 'unknown' 兜底，同 enhance 注释）
+      const sessionId = args && typeof args.sessionId === 'string' ? args.sessionId : '';
+      if (sessionId === '') return { ok: false, code: 'BAD_ARGS', message: 'sessionId required' };
       const seq = args && typeof args.seq === 'number' ? args.seq : -1;
       markAndAbort(requestKey(sessionId, seq), 'cancelled');
       return { ok: true };

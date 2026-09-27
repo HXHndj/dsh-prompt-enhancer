@@ -1,7 +1,8 @@
 # Changelog
 
 [3.3.3]: https://github.com/Fishsb/dsh-prompt-enhancer/compare/v3.3.2...v3.3.3
-[Unreleased]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v4.2.2...HEAD
+[Unreleased]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v4.2.3...HEAD
+[4.2.3]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v4.2.2...v4.2.3
 [4.2.2]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v4.2.1...v4.2.2
 [4.2.1]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v4.2.0...v4.2.1
 [4.2.0]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v4.1.1...v4.2.0
@@ -28,6 +29,24 @@
 > 🗺️ 条目内的 `flow:` 标注为功能链路标签（原 pmg 项目地图 `docs/map/` 已随 pmg 于 2026-09-10 移除，该路径不再存在）；agent 开工前先读 [`AGENTS.md`](AGENTS.md)。
 
 ## [Unreleased]
+
+## [4.2.3] - 2026-09-27
+
+> 多会话状态隔离修复轮：依据 [docs/audit-session-isolation.md](docs/audit-session-isolation.md)（F1–F10 十条发现，两轮审核 + scratch 复现），决策与实现要点见 [docs/plan-v4.5-decisions.md](docs/plan-v4.5-decisions.md)。
+
+### Fixed
+
+- **切档位不再跨会话清链（F2/F10，用户拍板语义）** `flow:enhance-memory`：原实现把「config.mode 跳变」挂在全局 config 订阅上 → `clearAllMemoryChains()` 遍历**所有**会话 store 清链/澄清记录并全前缀清扫 localStorage 残键——在会话 A 切档会清掉 B、C 及一切未挂载会话的记忆链（用户反馈「不同会话之间状态互相干扰」的主形态）；且启动期 host 磁盘配置同步（动态端口下 localStorage 丢失、磁盘 mode ≠ 缺省值时）**零用户操作即清光全部链**（F10，scratch 复现）。修复：删除全局监听与双 sweep，新增 `applyModeSwitch(sessionId, nextMode, paramsPatch)` 作为**唯一入口**——▾ 菜单传菜单所在会话、设置页传当前聚焦会话（`focusedSessionId` 登记，原 `activeSessionId` 收窄改名、不再参与注入判定）；同值重选不清链（口径不变）；其他会话（含已释放 store 的残键）全部保留。**已实测**：MEM-06 / AUDIT-03 / AUDIT-14（+wiring 钉住两入口）。
+- **返回会话不再静默丢弃优化结果（F1/F9）** `flow:enhance-flow`：切走期间完成的优化只暂存（结果键），切回时若宿主首帧草稿尚未回灌（空串或上一会话的陈旧值），旧消费 effect 会误判「用户已编辑」⇒ 不可逆丢弃（删键）、第二帧回灌后无法回注——用户看到「什么都没发生」。且该消费逻辑在 EnhanceButton 与 EnhanceBar 各有一份**行为分叉**的实现（bar 版丢弃时不删键、无回注分支，先执行者胜 ⇒ 残留键还会在 store 重建后把已丢弃结果复活为待消费态，F9）。修复：收敛为 `helpers.consumeResult(sessionId, draft, inputActions, firstFrame)` 单实现（两组件 effect 同源，任意执行顺序一致）；**瞬态帧（首帧空串/陈旧草稿）一律挂起**（不消费、不删键），第二帧草稿回灌为 backup ⇒ 自动回注；真实编辑（非空且 ≠backup/enhanced）维持丢弃+删键（L1 不可逆语义不变）；「草稿非空→空」（发送/手动清空）经 `discardResult` 作废挂起结果。**已实测**：AUDIT-05（原 todo 缺陷证据转正）、V42-41、AUDIT-13（双顺序 parity）。
+- **清链后在途结果不再复活轨迹（F3，用户拍板：应用但不入链）** `flow:enhance-memory`：原完成回调按请求时刻 config 判定入链，切档清链后到达的在途结果会把刚清掉的链 push 回去并重新落键（AUDIT-06 复现）。修复：store 增链世代 `chainEpoch`（清链 +1），完成回调仅当世代一致才写链/写澄清记录；结果本身照常应用（草稿替换 + optimized 置位）。**已实测**：AUDIT-06（转正）。
+- **「已优化」标记持久化（F5，用户拍板）** `flow:enhance-flow`：记忆关场景下（链空、结果键已消费）切走回收 store 再回来，optimized 丢失 → 「重新优化」入口退化为「首次」。修复：新键 `dsh-enh-opt:<sessionId>`（完成应用置位、undo 随链、清链删键、`storeFor` 恢复白名单新增），刷新/重启/回收重建后均恢复；回收行为维持（不抑制）。**已实测**：AUDIT-09（反转）、AUDIT-16（全链路）。
+- **完成回调 away 判定去全局化（F4）** `flow:enhance-flow`：原全局单值 `activeSessionId` 由挂载顺序决定（双实例后挂载者胜；持有者卸载把可见会话误判「已切走」；卸载重建实例后回调闭包持死实例 draftRef/inputActions）。修复：`enhance()` 增第 7 参 liveness（组件自持 ref，渲染期刷新、换会话/卸载后不再等于本次 sessionId），实例本地判定；缺省视为存活（兼容直调）。**已实测**：AUDIT-15、AUDIT-01。
+- **切换会话收起 ▾ 菜单（F6）** `flow:enhance-ui`：`menuOpen` 组件态随 sessionId 复位，上一会话打开的菜单不再残留到新会话。源码级（wiring 断言）。
+- **删除死键 seen（F7）** `flow:enhance-memory`：`dsh.enhance.seen.<sessionId>` 只写不读（全 bundle 唯一命中即常量定义处），连同 `seenKey/writeSeen/clearSeen` 与 `SEEN_KEY_PREFIX` 常量、dead-code-gate 白名单条目整体删除；`lastDraft` 保留（设置页连通性测试有读方，非死状态——审计复核轮已撤回「死代码」误判）。
+
+### Changed（对外行为变更，单列申报）
+
+- **host 缺失 sessionId 一律报错（F8）** `flow:rpc-contract`：`enhance` / `cancel` 的 `'unknown'` 兜底与 `enhance/progress` 的 `''` 兜底（三者互不一致，匿名请求共享兜底键可能互相命中 cancel/progress，且与 rpc-schema `required:['sessionId','text']` 矛盾）统一改为缺/空 ⇒ `{ok:false, code:'BAD_ARGS'}`；progress 对合法 sessionId 无在途记录仍返回 NO_RECORD。当前官方客户端恒携带 sessionId（无 sessionId 不渲染不发请求），实际不可达；rpc-manifest 治理注记要求的「静默容忍 → 报错」行为变更在此申报。**已实测**：bundle-smoke / rpc-contract 回归（SMK-03/04 携合法 sessionId 不受影响）。
 
 ## [4.2.2] - 2026-09-27
 
