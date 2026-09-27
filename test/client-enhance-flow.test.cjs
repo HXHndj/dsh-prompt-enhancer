@@ -74,6 +74,7 @@ function loadButton(helpers, sessionId, opts) {
   // getFocusedSession/consumeResult/discardResult。clearResultCalls 记账保留（恒空）：
   // 消费路径的删键断言改走 lsBacking 结果键（helpers.consumeResult 内部真删）。
   const clearResultCalls = [];
+  const intervals = [];   // v4.2.4：timerSvc.interval 捕获（耗时秒表用例手动 fire）
   let cells = [];
   let cursor = 0;
   let pending = [];
@@ -116,7 +117,9 @@ function loadButton(helpers, sessionId, opts) {
     helpers.api.clearMemoryChain, helpers.api.discardResult, helpers.api.cancelEnhance, (code) => code, helpers.api.undo,
     // v4.2（task-4）：enhancing 态的 500ms 进度轮询经 bundle 注入的 ctx timer 服务（chunk 内为自由变量）——
     // 单测桩一个空 disposer，使「增强中」渲染路径可达（否则引用未声明标识符 ReferenceError）
-    { interval: () => () => {} },
+    // v4.2.4：回调改为**可捕获**（intervals 数组）——耗时胶囊的秒表走同一 timer 服务，
+    // 用例可手动 fire 一格并配合伪造 Date.now 断言逐秒累加/退出归零；不 fire 时行为与旧桩完全一致。
+    { interval: (fn) => { intervals.push(fn); return () => {}; } },
     helpers.api.consumeResult
   );
   // render(draft, phase, overrideSid)：模拟一次渲染并执行 deps 变化的 effect（React 语义最小子集）；
@@ -137,7 +140,7 @@ function loadButton(helpers, sessionId, opts) {
     for (const fn of fns) fn();
     return el;
   };
-  return { render, clearResultCalls };
+  return { render, clearResultCalls, intervals };
 }
 
 // v4.2（task-12）：错误文案断言需要真实 ZH 文案表（此前失败路径只断言错误码，未覆盖上屏文案）
@@ -1494,7 +1497,7 @@ function loadButtonSpy(h, sessionId, opts) {
   h.api.enhance = function (...args) { calls.push({ fn: 'enhance', args }); return realEnhance.apply(null, args); };
   h.api.undo = function (...args) { calls.push({ fn: 'undo', args }); return realUndo.apply(null, args); };
   const b = loadButton(h, sessionId, opts);
-  return { calls, render: b.render, clearResultCalls: b.clearResultCalls };
+  return { calls, render: b.render, clearResultCalls: b.clearResultCalls, intervals: b.intervals };
 }
 const countOf = (src, needle) => src.split(needle).length - 1;
 // 邻近契约：a 之后 ≤max 字符内必须出现 b（替代正则，避免转义歧义）
@@ -2286,6 +2289,173 @@ test('V422-04 重新优化中性底: label-secondary 6% 淡底（与三态同浓
   const btn = decodeChunk('src/client/components/enhance-button.js');
   assert.ok(btn.includes("dsh-enh-btn-text dsh-enh-btn-center dsh-enh-btn-redo"),
     '重新优化态必须挂 dsh-enh-btn-redo（且保留居中类）');
+});
+
+// ================= v4.2.4（忙碌态光学居中 + 悬停底色红化） =================
+// 用户截图指出两点：① 忙碌态「圆环 + 正在优化」里圆环看起来偏高（未做纵向居中）；
+// ② 悬停变「取消」时底色由黄转灰，与红字语义脱节。
+// 实机实测（Chromium 字体度量 + 隔离实例）：13px/600 中文行盒 20px 时 natural ascent 14 / descent 3
+// ⇒ 文字墨迹中心比行盒中心低 1.5px；15px 圆环由 flex 居中、落点恰在胶囊几何中心。修法 = 文字上移 1.5px。
+test('V424-01 忙碌态光学居中: 状态文字上移 1.5px（环保持几何居中）⇒ 环-墨迹同轴', () => {
+  const css = decodeChunk('src/client/styles.js');
+  const status = cssRuleOf(css, '.dsh-enh-btn-busy .dsh-enh-status');
+  assert.ok(status, '缺 .dsh-enh-btn-busy .dsh-enh-status 规则');
+  assert.ok(/top:-1\.5px/.test(status), 'busy 态状态文字必须上移 1.5px（实测墨迹中心偏低量）');
+  assert.ok(/position:relative/.test(status) && /display:inline-block/.test(status),
+    '相对定位 + 文档流占位（v2.3.3 hover 闪烁修复）不得回归');
+  // 补正放在「文字」侧：圆环继续由容器 flex 居中 ⇒ 环仍在胶囊几何中心（两态位移一致）
+  const spin = cssRuleOf(css, '.dsh-enh-spin');
+  assert.ok(spin, '缺 .dsh-enh-spin');
+  assert.ok(/width:11px/.test(spin) && /height:11px/.test(spin) && /border-radius:50%/.test(spin),
+    '圆环几何（11px 盒 + 2px 描边 = 15px）不得改动');
+  assert.equal(/position:relative|top:/.test(spin), false, '圆环不得靠位移补正（否则整块内容会低于胶囊中心）');
+  const btn = cssRuleOf(css, '.dsh-enh-btn');
+  assert.ok(/display:inline-flex/.test(btn) && /align-items:center/.test(btn), '主键容器必须保持 flex 纵向居中');
+  // 取消态覆盖层与进度文字同盒（inset:0）⇒ 上移对「正在优化 / 取消」两态完全一致
+  const cancel = cssRuleOf(css, '.dsh-enh-btn-busy .dsh-enh-cancel');
+  assert.ok(cancel && /position:absolute/.test(cancel) && /inset:0/.test(cancel),
+    '取消覆盖层必须仍与状态盒同域（follow 状态盒位移）');
+  // 渲染级：busy 产物结构不变（圆环 + 状态盒[进度/取消]）
+  const chunk = decodeChunk('src/client/components/enhance-button.js');
+  assert.ok(chunk.includes("className: 'dsh-enh-spin'") && chunk.includes("className: 'dsh-enh-status'")
+    && chunk.includes("className: 'dsh-enh-progress'") && chunk.includes("className: 'dsh-enh-cancel'"),
+    'busy 产物四要素（spinner/status/progress/cancel）接线不得改动');
+});
+
+test('V424-02 忙碌态悬停底色: 中性灰 → error 10% 淡红（规则序压在通用 hover 之后）', () => {
+  const css = decodeChunk('src/client/styles.js');
+  const busyHover = cssRuleOf(css, '.dsh-enh-btn-busy:hover:not(:disabled)');
+  assert.ok(busyHover, '缺 .dsh-enh-btn-busy:hover:not(:disabled) 规则');
+  assert.ok(busyHover.includes('color-mix(in srgb,var(--dsw-alias-state-error-primary) 10%,transparent)'),
+    '悬停底色必须是 error 10% 淡红（与「取消」红字同色系）');
+  assert.equal(/interactive-bg-hover/.test(busyHover), false, '不得再落回通用中性灰 hover');
+  // 级联关键：与 .dsh-enh-btn:hover:not(:disabled) 同为 0-3-0 ⇒ 只能靠源码顺序取胜
+  const generic = css.indexOf('.dsh-enh-btn:hover:not(:disabled){');
+  const busy = css.indexOf('.dsh-enh-btn-busy:hover:not(:disabled){');
+  assert.ok(generic >= 0 && busy >= 0, '两条 hover 规则都必须存在');
+  assert.ok(busy > generic, 'busy hover 规则必须排在通用 hover 规则之后（同权重靠顺序）');
+  // 静止态底色仍是警示黄 6%（红只在悬停出现）
+  const busyBase = cssRuleOf(css, '.dsh-enh-btn-busy');
+  assert.ok(/var\(--dsw-alias-state-warn-primary\) 6%,transparent/.test(busyBase),
+    '静止态底色必须保持警示黄 6%');
+  // 取消态文字色不变（error primary 已由既有规则承担）
+  const cancel = cssRuleOf(css, '.dsh-enh-btn-busy .dsh-enh-cancel');
+  assert.ok(/color:var\(--dsw-alias-state-error-primary\)/.test(cancel), '取消文字仍取 error primary');
+});
+
+// ================= v4.2.4（耗时组件·预设①「胶囊外·独立淡底小胶囊」） =================
+// 用户拍板：位置 = 主键左侧独立小胶囊（对应其图三红框）；格式 = mm:ss（00:08）；配色 = 次级灰。
+test('V424-03 耗时胶囊格式: formatElapsed = mm:ss（00:08 / 01:05 / 128:45，非法输入归零）', () => {
+  const src = decodeChunk('src/client/components/enhance-button.js');
+  const formatElapsed = new Function(src + '\n;return formatElapsed;')();
+  assert.equal(formatElapsed(0), '00:00');
+  assert.equal(formatElapsed(999), '00:00', '不足 1 秒不冒进（向下取整）');
+  assert.equal(formatElapsed(8000), '00:08');
+  assert.equal(formatElapsed(15000), '00:15');
+  assert.equal(formatElapsed(59999), '00:59');
+  assert.equal(formatElapsed(60000), '01:00');
+  assert.equal(formatElapsed(65000), '01:05');
+  assert.equal(formatElapsed(3599000), '59:59');
+  assert.equal(formatElapsed(3600000), '60:00');
+  assert.equal(formatElapsed(7730000), '128:50', '超过 99 分钟按分钟数继续增长（不截断）');
+  assert.equal(formatElapsed(-5), '00:00', '负值归零');
+  assert.equal(formatElapsed(NaN), '00:00', 'NaN 归零');
+  assert.equal(formatElapsed(undefined), '00:00', 'undefined 归零');
+});
+
+test('V424-04 耗时胶囊接线: 仅 enhancing 态渲染、位于主键左侧的兄弟节点、纯展示（不可点/不进 a11y 树）', () => {
+  const h = loadHelpers({ memory: true, mode: 'standard' });
+  const sid = 'sess-v424-timer';
+  const s = h.api.storeFor(sid);
+  s.phase = 'enhancing';
+  s.optimized = true;
+  s.memoryRounds = [{ input: 'a', output: 'A' }];
+  const b = loadButtonSpy(h, sid);
+  const el = b.render('a', 'plain');
+  const split = splitOf(el);
+  const kids = split.children.filter((x) => x !== null && x !== undefined);
+  // ① 结构：忙碌态 = [timer, main, EnhanceMenu]（副键此时不渲染；timer 不在按钮内 ⇒ 不会误触「取消」）
+  const timerEl = classEl(el, 'dsh-enh-timer');
+  assert.ok(timerEl, '忙碌态必须渲染 .dsh-enh-timer 耗时胶囊');
+  assert.equal(kids[0], timerEl, '耗时胶囊必须是组合体首位（主键左侧）');
+  assert.equal(kids[1], mainBtnOf(el), '主键紧随耗时胶囊');
+  assert.equal(kids.length, 3, '忙碌态组合体 = [timer, main, EnhanceMenu]');
+  // ② 纯展示：aria-hidden（不进无障碍树）+ 无 onClick/tabIndex（不可交互、不抢焦点）
+  assert.equal(timerEl.props['aria-hidden'], true, '耗时胶囊必须 aria-hidden');
+  assert.equal(timerEl.props.onClick, undefined, '耗时胶囊不得挂点击处理器');
+  assert.equal(timerEl.props.tabIndex, undefined, '耗时胶囊不得进 Tab 序列');
+  assert.equal(timerEl.props.title, undefined, '耗时胶囊不得带 hover 提示（纯展示）');
+  assert.equal(collectText(timerEl).join(''), '00:00', '首帧未满 1 秒 = 00:00（本地秒表起算）');
+  // ③ 非忙碌态不得渲染（result 态：组合体回到 [aux, main, EnhanceMenu]）
+  s.phase = 'idle';
+  s.enhanced = 'a';
+  const el2 = b.render('a', 'plain');
+  assert.equal(classEl(el2, 'dsh-enh-timer'), undefined, '非忙碌态不得渲染耗时胶囊');
+  const kids2 = splitOf(el2).children.filter((x) => x !== null && x !== undefined);
+  assert.ok(hasClass(kids2[0], 'dsh-enh-aux'), '非忙碌态结构不变（首位仍是副键）');
+  assert.equal(kids2.length, 3, '非忙碌态组合体仍是 [aux, main, EnhanceMenu]');
+});
+
+test('V424-05 耗时胶囊样式契约: 28px 高同胶囊 / 中性 6% 淡底 / 等宽数字 / pointer-events:none', () => {
+  const css = decodeChunk('src/client/styles.js');
+  const chip = cssRuleOf(css, '.dsh-enh-timer');
+  assert.ok(chip, '缺 .dsh-enh-timer 规则');
+  assert.ok(/height:28px/.test(chip), '与主键同高（28px）');
+  assert.ok(/border-radius:999px/.test(chip) && /corner-shape:round/.test(chip),
+    '全圆角并显式退出宿主全局超椭圆（与副键/主键同款做法）');
+  assert.ok(chip.includes('background:color-mix(in srgb,var(--dsw-alias-label-secondary) 6%,transparent)'),
+    '中性 6% 淡底（与 .dsh-enh-btn-redo 同一配方）');
+  assert.equal(/interactive-bg-hover/.test(chip), false, '不得把 hover 专用 token 当静止底');
+  assert.ok(/font-variant-numeric:tabular-nums/.test(chip), '等宽数字（00:08 → 00:59 进位不抖动）');
+  assert.ok(/pointer-events:none/.test(chip), '纯展示：不可点击（点击穿透，不会误触主键「取消」）');
+  assert.ok(/user-select:none/.test(chip), '不可选中文本（纯展示）');
+  assert.ok(/margin-right:2px/.test(chip), '与主键之间 2px 间隙（与副键同节奏）');
+  assert.ok(/min-width:48px/.test(chip), 'min-width 容纳 mm:ss 满宽（避免逐秒抖动）');
+  assert.ok(/color:var\(--dsw-alias-label-secondary\)/.test(chip), '次级灰文字（用户拍板配色）');
+  // 不引入交互态：无 :hover/:focus 规则
+  assert.equal(/\.dsh-enh-timer:(hover|focus|active)/.test(css), false, '耗时胶囊不得有交互态样式');
+});
+
+test('V424-06 耗时胶囊秒表: 进入 enhancing 起算、逐秒累加、退出/切会话归零', () => {
+  const realNow = Date.now;
+  let fake = 1_700_000_000_000;
+  Date.now = () => fake;
+  try {
+    const h = loadHelpers({ memory: true, mode: 'standard' });
+    const sid = 'sess-v424-stopwatch';
+    const s = h.api.storeFor(sid);
+    const b = loadButtonSpy(h, sid);
+    // 非忙碌态：不渲染、且不注册秒表 interval
+    let el = b.render('草稿', 'plain');
+    assert.equal(classEl(el, 'dsh-enh-timer'), undefined, '非忙碌态不渲染耗时胶囊');
+    assert.equal(b.intervals.length, 0, '非忙碌态不得注册秒表 interval');
+    // 进入 enhancing：effect 起算（首次渲染 00:00）+ 注册 1s interval
+    s.phase = 'enhancing';
+    el = b.render('草稿', 'plain');
+    assert.equal(collectText(classEl(el, 'dsh-enh-timer')).join(''), '00:00', '起算帧 = 00:00');
+    assert.ok(b.intervals.length >= 1, 'enhancing 必须注册秒表 interval（timerSvc）');
+    const tick = b.intervals[b.intervals.length - 1];
+    // 走到 8 秒：fire 一格 + 重渲染（同一个 setElapsedMs 状态格）⇒ 00:08
+    fake += 8000;
+    tick();
+    el = b.render('草稿', 'plain');
+    assert.equal(collectText(classEl(el, 'dsh-enh-timer')).join(''), '00:08', '8 秒后 = 00:08（实时累加）');
+    // 走到 1 分 5 秒：01:05（跨分进位）
+    fake += 57000;
+    tick();
+    el = b.render('草稿', 'plain');
+    assert.equal(collectText(classEl(el, 'dsh-enh-timer')).join(''), '01:05', '65 秒后 = 01:05（跨分进位）');
+    // 退出忙碌（result）：胶囊消失且计时归零（下一次进入从 00:00 重新起算）
+    s.phase = 'idle';
+    s.enhanced = 'draft';
+    el = b.render('draft', 'plain');
+    assert.equal(classEl(el, 'dsh-enh-timer'), undefined, '退出忙碌 ⇒ 胶囊消失');
+    s.phase = 'enhancing';
+    el = b.render('draft', 'plain');
+    assert.equal(collectText(classEl(el, 'dsh-enh-timer')).join(''), '00:00', '再次进入忙碌 ⇒ 从 00:00 重新起算（不残留上一轮耗时）');
+  } finally {
+    Date.now = realNow;
+  }
 });
 
 test('V42-41 result 消费 effect: 首帧挂起（F1）→ 第二帧用户编辑 ⇒ 消费为 idle + 清结果键；草稿 === backup ⇒ 重新应用结果', () => {

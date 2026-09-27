@@ -1,7 +1,8 @@
 # Changelog
 
 [3.3.3]: https://github.com/Fishsb/dsh-prompt-enhancer/compare/v3.3.2...v3.3.3
-[Unreleased]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v4.2.3...HEAD
+[Unreleased]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v4.2.4...HEAD
+[4.2.4]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v4.2.3...v4.2.4
 [4.2.3]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v4.2.2...v4.2.3
 [4.2.2]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v4.2.1...v4.2.2
 [4.2.1]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v4.2.0...v4.2.1
@@ -29,6 +30,17 @@
 > 🗺️ 条目内的 `flow:` 标注为功能链路标签（原 pmg 项目地图 `docs/map/` 已随 pmg 于 2026-09-10 移除，该路径不再存在）；agent 开工前先读 [`AGENTS.md`](AGENTS.md)。
 
 ## [Unreleased]
+
+## [4.2.4] - 2026-09-27
+
+### Added
+
+- **忙碌态耗时胶囊 `[00:08]`（v4.2.4·用户拍板·预设①「胶囊外·独立淡底小胶囊」）** `flow:enhance-ui`：优化进行中在主键**左侧**新增一枚纯展示耗时胶囊（对应你图三红框位置）——格式 `mm:ss`（`00:08` / `01:05`；超过 99 分钟继续按分钟增长 `128:50`）、**1s 一跳实时累加**、次级灰中性配色。要点：① **纯展示且零交互风险**——`aria-hidden`（与既有 `.dsh-enh-status` 同口径：语义由主键 `aria-label` 承担）+ CSS `pointer-events:none`（点击穿透 ⇒ 既不可点、也**绝不可能误触主键的「取消」**，实机命中测试 `elementFromPoint` 落在组合体容器上）+ `user-select:none` + 无 `tabIndex`；② **不进按钮内**：作为主键**左侧的兄弟节点**渲染 ⇒ `.dsh-enh-split` 子元素顺序扩为 `[aux, timer, main, EnhanceMenu]`（null 槽由 React 忽略；副键只在 result/idle、timer 只在 enhancing ⇒ 二者恒不同时出现，非忙碌态结构契约不变）；③ **数据源 = 本地秒表**（进入 enhancing 起算 + `timerSvc.interval` 1s 一跳），**刻意不复用** `enhance/progress` 的 `elapsedMs`——那是 500ms 轮询回来的 host 值，轮询失败时会长时间冻结，而耗时是纯展示信息、不应随网络抖动失真；④ 形态：28px 高 / 全圆角 + `corner-shape:round`（退出宿主全局超椭圆）/ `label-secondary` 6% 淡底（与 `.dsh-enh-btn-redo` 同配方；不用 hover 专用 token 当静止底）/ `tabular-nums` + `tnum` 等宽数字（进位不抖动）/ `margin-right:2px`（与副键同款间隙节奏）。**已实测**：`formatElapsed` 12 格（0/999/8000/65000/3599000/3600000/7730000/-5/NaN/undefined…）；秒表行为用例（起算 00:00 → 8s → `00:08` → 65s → `01:05` → 退出再进入归零，走真实 effect + 捕获的 timerSvc 回调 + 伪造 `Date.now`）；**隔离实例实机**注入真实结构读数：胶囊 `64×28`（DengXian 数字较宽）/ 与主键间隙 **2.00px** / 与主键同轴 `cy=534` / 计算样式 `pointer-events:none`、`user-select:none`、`font-variant-numeric:tabular-nums`、`border-radius:999px`、`corner-shape:superellipse(1)`、底色 `color(srgb .812 .827 .839 / .06)`、文字 `rgb(207,211,214)`；点击胶囊中心命中组合体容器（**未落到主键**，`hovered:false`）；截图 `shots/v424-chip-busy.png` / `shots/v424-chip-hover.png`（悬停时胶囊保持中性灰、主键转红「取消」，计时不受影响）。单测新增 **V424-03/04/05/06**（格式 12 格 / 接线与结构互换 / 样式逐字契约 / 秒表行为）。
+
+### Fixed
+
+- **忙碌态「圆环 + 正在优化」未做光学居中：圆环看起来偏高（v4.2.4）** `flow:enhance-ui`：用户截图指出优化进行中的圆圈小动画「未做好纵向居中、未合理排布在胶囊的纵向居中处」。实测（Chromium 字体度量 + 隔离实例读数）根因**不在圆环**——15px 圆环（11px 内容 + 2×2px 描边）由容器 `align-items:center` 居中，落点恰在胶囊纵向中心（ringCy − btnCy = 0.00px）；**偏低的是文字**：13px/600 中文（DengXian 栈）行盒 20px 时字体 natural ascent 14 / descent 3，`actualBoundingBox` 墨迹中心比行盒中心低 **1.5px**（inkCy − btnCy = +1.50px）⇒ 环−墨迹偏差 **−1.5px**，视觉上即「圆环偏高」。修法：忙碌态状态文字整体上移 1.5px（`.dsh-enh-btn-busy .dsh-enh-status{position:relative;top:-1.5px}`，纯绘制位移：不改布局、不改胶囊宽度、绝对定位的「取消」覆盖层随之同步）⇒ 文字墨迹中心回到胶囊中心、与圆环同轴，二者同时居中；圆环几何与 flex 居中一律不动（另一候选「环下移 1.5px」会让整块内容低于胶囊中心，未取）。**已实测**：浏览器 5 档候选对照渲染（DPR 1.25）环−墨迹偏差 **−1.5px → 0.0px** 且 ringCy/inkCy/btnCy 三者重合；**隔离实例实机**（临时 `DSH_HOME` + 随机端口，真实宿主环境与字体栈）忙碌态探针读数 `dRingInk=0.00 / dRingBtn=0.00 / dInkBtn=0.00`（`statusTop=-1.5px` 生效），截图 `shots/v423-busy-fixed.png` / `shots/v423-busy-hover-real.png`；单测新增 **V424-01**（上移量 + 相对定位/文档流占位不回归 + 圆环不得靠位移补正 + 容器仍 flex 居中 + 取消覆盖层同域 + busy 产物四要素接线）。
+- **忙碌态悬停底色由「中性灰」改为「红」，与「取消」红字同色系（v4.2.4）** `flow:enhance-ui`：用户截图指出鼠标移到「正在优化」上时文案变「取消」、底色却由黄转灰，语义脱节。根因：通用规则 `.dsh-enh-btn:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}` 把忙碌态的警示黄底覆盖成中性灰。修法：新增 `.dsh-enh-btn-busy:hover:not(:disabled){background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 10%,transparent)}`（静止态黄 6% → 悬停红 10%：既换色相又略加深，悬停反馈更明确）；该规则与通用 hover 规则**同权重 0-3-0**，靠**源码顺序靠后**取胜，故必须写在通用规则之后（单测锁定该顺序）。**已实测**：隔离实例实机 CDP 真实鼠标移动触发 `:hover` ⇒ 计算底色 `color(srgb 0.94902 0.352941 0.352941 / 0.1)`（error 10%，原为 interactive-bg-hover 中性灰），进度文字 `opacity:0` → 取消文字 `opacity:1`、色 `rgb(242,90,90)`；单测新增 **V424-02**（逐字配方 + 不得回落中性灰 + 规则序 + 静止态仍为黄 6% + 取消字色不变）。
 
 ## [4.2.3] - 2026-09-27
 
