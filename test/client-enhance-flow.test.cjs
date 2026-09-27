@@ -1249,7 +1249,7 @@ test('MEM wiring: 清链三触发的接线标记（草稿跳变 + 切模式监�
 });
 
 // ---------- v3.6.0 分裂按钮（用户拍板）：空输入禁用 + ▾ 菜单接线契约 ----------
-test('ENH-FLOW wiring: 空输入主键 = 可点击开增强设置（禁用态退役；置灰观感与 ▾ 菜单保留）', () => {
+test('ENH-FLOW wiring: 空输入主键 = 可点击开增强设置（禁用态退役；空输入零专属样式，✨ 只表示记忆流）', () => {
   const btn = decodeChunk('src/client/components/enhance-button.js');
   const menu = decodeChunk('src/client/components/enhance-menu.js');
   const i18n = decodeChunk('src/client/i18n.js');
@@ -1260,7 +1260,14 @@ test('ENH-FLOW wiring: 空输入主键 = 可点击开增强设置（禁用态退
   // v3.5.7（用户需求·空输入可点击）：空输入不再是禁用态——点击主键开合 ▾ 增强设置菜单
   assert.equal(btn.includes('disabled = true;'), false, '空输入不得再置 disabled（禁用态已退役）');
   assert.ok(/if \(empty\) \{[\s\S]{0,500}setMenuOpen\(\(v\) => !v\)/.test(btn), '空输入分支必须接线「点击开合菜单」（setMenuOpen 函数式切换）');
-  assert.ok(btn.includes('dsh-enh-btn-empty'), '空输入仍须携带置灰类（styles 已定义 .dsh-enh-btn-empty）');
+  // v4.4.2（用户需求·最终口径）：✨ 的饱和度是记忆流开关的**唯一**指示通道——空输入态不得再有任何专属
+  // 样式（v3.5.3 整键压暗 / v4.4.1 仅压 ✨ 两版规则均已退役）：否则「空输入 + 记忆开」会被误读成
+  // 「记忆流关」，且与「专家档固定记忆」自相矛盾。此处锁死新契约并防旧规则回归。
+  assert.equal(btn.includes('dsh-enh-btn-empty'), false, '空输入专属置灰类必须退役（✨ 只表示记忆流开关）');
+  const css = decodeChunk('src/client/styles.js');
+  assert.equal(css.includes('dsh-enh-btn-empty'), false, 'styles 不得再定义空输入专属规则（防裸类/防回归）');
+  assert.ok(btn.includes("configState.value.memory === true || configState.value.mode === 'expert' ? '' : ' dsh-enh-icon-dim'"), '✨ dim 必须只由记忆流决定（含专家档恒视为开）');
+  assert.ok(css.includes('.dsh-enh-icon-dim{filter:saturate(.2)}'), '记忆流「关」的低饱和规则必须保留');
   assert.ok(btn.includes("t('titleEmptyInput')"), '空输入 title 必须用 titleEmptyInput 键');
   // 受控开合：主键与 ▾ 共用同一状态 + 锚点 ref（点击主键不算点击外部）
   assert.ok(btn.includes('open: menuOpen') && btn.includes('onOpenChange: setMenuOpen'), '主键必须以受控方式把 open/onOpenChange 传给 EnhanceMenu');
