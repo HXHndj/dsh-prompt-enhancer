@@ -59,8 +59,11 @@ function loadHelpers(configValue, opts) {
 // v4.1（D1 清链触发①）：EnhanceButton 的「草稿被清空」效应是 React effect——用迷你 React 运行时
 //（useState/useRef/useEffect + deps 浅比较）驱动真实组件函数，不改组件代码即可断言跳变语义：
 // 首屏草稿本就为空不得误清（D2 刷新保链），「非空 → 空」跳变（发送/手动清空）才清链。
-function loadButton(helpers, sessionId) {
+// v4.2-r2（task-4）：opts.inputActions 覆盖 harness 的 noop setDraft（撤销/重灌分支要读回草稿写入值）；
+// opts 省略时行为与既有用例完全一致。
+function loadButton(helpers, sessionId, opts) {
   const src = decodeChunk('src/client/components/enhance-button.js');
+  const clearResultCalls = [];
   let cells = [];
   let cursor = 0;
   let pending = [];
@@ -91,7 +94,8 @@ function loadButton(helpers, sessionId) {
   const factory = new Function(
     'React', 'makeT', 'subscribe', 'subscribeConfig', 'storeFor', 'notify', 'releaseStoreIfIdle', 'setActiveSession',
     'getActiveSession', 'safeSetDraft', 'setLastDraft', 'guardPasses', 'modeShortLabel', 'configState', 'EnhanceMenu',
-    'clarifyCancel', 'enhance', 'host', 'clearMemoryChain', 'clearSeen', 'cancelEnhance', 'errorKey', 'undo',
+    'clarifyCancel', 'enhance', 'host', 'clearMemoryChain', 'clearSeen', 'cancelEnhance', 'errorKey', 'undo', 'timerSvc',
+    'clearResultStore',
     src + '\n;return EnhanceButton;'
   );
   const EnhanceButton = factory(
@@ -99,7 +103,13 @@ function loadButton(helpers, sessionId) {
     helpers.api.storeFor, helpers.api.notify, helpers.api.releaseStoreIfIdle, helpers.api.setActiveSession,
     helpers.api.getActiveSession, helpers.api.safeSetDraft, noop, helpers.api.guardPasses, (tt, mode) => mode,
     helpers.configState, () => null, helpers.api.clarifyCancel, helpers.api.enhance, helpers.hostStub,
-    helpers.api.clearMemoryChain, helpers.api.clearSeen, helpers.api.cancelEnhance, (code) => code, helpers.api.undo
+    helpers.api.clearMemoryChain, helpers.api.clearSeen, helpers.api.cancelEnhance, (code) => code, helpers.api.undo,
+    // v4.2（task-4）：enhancing 态的 500ms 进度轮询经 bundle 注入的 ctx timer 服务（chunk 内为自由变量）——
+    // 单测桩一个空 disposer，使「增强中」渲染路径可达（否则引用未声明标识符 ReferenceError）
+    { interval: () => () => {} },
+    // v4.2-r2（task-4）：result 态消费 effect 也引用 chunk 级 clearResultStore（此前触达即 ReferenceError）——
+    // 桩同时记账 + 真删结果键，使「消费为 idle 且清结果键」可断言
+    (sid) => { clearResultCalls.push(sid); helpers.lsBacking.delete(RK(sid)); }
   );
   // render(draft, phase, overrideSid)：模拟一次渲染并执行 deps 变化的 effect（React 语义最小子集）；
   // overrideSid 模拟「渲染器复用同一实例、只换 sessionId prop」的会话切换
@@ -111,7 +121,7 @@ function loadButton(helpers, sessionId) {
       sessionId: sid,
       useSession: () => ({ sessionId: sid }),
       useInput: () => ({ draft, phase: phase || 'plain' }),
-      inputActions: { setDraft: noop },
+      inputActions: (opts && opts.inputActions) || { setDraft: noop },
       t,
     });
     const fns = pending;
@@ -119,7 +129,7 @@ function loadButton(helpers, sessionId) {
     for (const fn of fns) fn();
     return el;
   };
-  return { render };
+  return { render, clearResultCalls };
 }
 
 // v4.2（task-12）：错误文案断言需要真实 ZH 文案表（此前失败路径只断言错误码，未覆盖上屏文案）
@@ -1077,25 +1087,113 @@ test('MEM-11 切会话: 从草稿非空的会话切到草稿为空的新会话 �
   assert.equal(h.api.storeFor(a).memoryRounds.length, 1, '原会话链也不受影响');
 });
 
-test('MEM-07 undo(保持 D5): 撤销只弹最近一轮并同步持久化（否则刷新复活已撤回轮）', async () => {
-  const { api, hostStub, lsBacking } = loadHelpers({ memory: true, mode: 'standard' });
+// v4.2（§3.1 undo 放开）：前置放开到 idle + optimized、回退点按「backup 正文 === 末轮 input」选择、
+// 链非空即保持 optimized（连环撤销）——旧 D5 口径（仅 result 态 + 恒复位 optimized）已被本轮取代。
+test('MEM-07 undo(v4.2 放开): result 态回本轮起点（斜杠前缀保留）+ idle 态放开 + 连环撤销 + 刷新兜底 + 空链空 backup 不动作', async () => {
+  // ① result 态：末轮 input === backup 正文 → 回退取 backup（斜杠命令前缀保留）
+  const h = loadHelpers({ memory: true, mode: 'standard' });
   const sid = 'sess-undo';
-  api.setActiveSession(sid);
-  const inputActions = { setDraft: () => {} };
-  const draftRef = { current: 'd1' };
+  h.api.setActiveSession(sid);
+  const writes = [];
+  const inputActions = { setDraft: (v) => writes.push(v) };
+  const draftRef = { current: '/deploy 正文A' };
   let n = 0;
-  hostStub.respond = () => ({ ok: true, text: 'O' + (++n) });
-  api.enhance(sid, 'd1', inputActions, draftRef);
+  h.hostStub.respond = () => ({ ok: true, text: 'O' + (++n) });
+  h.api.enhance(sid, '/deploy 正文A', inputActions, draftRef);
   await flush();
-  draftRef.current = 'd2';
-  api.enhance(sid, 'd2', inputActions, draftRef);
+  const s = h.api.storeFor(sid);
+  assert.equal(s.phase, 'result');
+  assert.deepEqual(s.memoryRounds, [{ input: '正文A', output: 'O1' }], '入链只存正文（斜杠前缀剥离，§3.6）');
+  assert.deepEqual(writes, ['/deploy O1'], '前置：结果写回草稿（前缀 + 模型输出）');
+  h.api.undo(sid, inputActions);
+  assert.deepEqual(writes.slice(1), ['/deploy 正文A'], '§3.1：splitCommand(backup).body === 末轮 input → 回退取 backup（前缀保留）');
+  assert.equal(s.phase, 'idle');
+  assert.equal(s.enhanced, '');
+  assert.equal(s.error, null);
+  assert.deepEqual(s.memoryRounds, [], '§3.1：只弹最近一轮');
+  assert.equal(s.optimized, false, '§3.1：撤到链空 → optimized=false（回首次态）');
+  assert.equal(h.lsBacking.has(MK(sid)), false, '§2.3：弹出后同步持久化键（空链即删键）');
+  assert.equal(h.lsBacking.has(RK(sid)), false, 'undo 必须清结果持久化键');
+
+  // ② idle 态放开（v4.2 新行为：旧实现 phase !== 'result' 直接 return，结果已消费后无法撤销）
+  const sid2 = 'sess-undo-idle';
+  h.api.setActiveSession(sid2);
+  const w2 = [];
+  const ia2 = { setDraft: (v) => w2.push(v) };
+  const dr2 = { current: 'e1' };
+  h.api.enhance(sid2, 'e1', ia2, dr2);
   await flush();
-  assert.equal(api.storeFor(sid).memoryRounds.length, 2);
-  api.undo(sid, inputActions);
-  const s = api.storeFor(sid);
-  assert.deepEqual(s.memoryRounds, [{ input: 'd1', output: 'O1' }], 'D5：撤销语义不变——只弹最近一轮');
-  assert.deepEqual(JSON.parse(lsBacking.get(MK(sid))), s.memoryRounds, '弹出后同步持久化键');
-  assert.equal(s.optimized, false, '撤销复位 optimized');
+  h.api.storeFor(sid2).phase = 'idle'; // 结果已被消费（idle），但链与 optimized 仍在
+  const base2 = w2.length; // 结果写回那一笔不计入撤销断言
+  h.api.undo(sid2, ia2);
+  assert.deepEqual(w2.slice(base2), ['e1'], '§3.1 前置：phase === "idle" && optimized === true 必须放开撤销');
+  assert.equal(h.api.storeFor(sid2).phase, 'idle');
+  assert.equal(h.api.storeFor(sid2).optimized, false, '链空 → 回首次态');
+
+  // ③ 连环撤销：每步草稿回该轮 input；链非空时 optimized 保持 true，撤到链空才回首次态
+  const sid3 = 'sess-undo-chain';
+  h.api.setActiveSession(sid3);
+  const w3 = [];
+  const ia3 = { setDraft: (v) => w3.push(v) };
+  const dr3 = { current: 'd1' };
+  for (const d of ['d1', 'd2', 'd3']) {
+    dr3.current = d;
+    h.api.enhance(sid3, d, ia3, dr3);
+    await flush();
+  }
+  const s3 = h.api.storeFor(sid3);
+  assert.equal(s3.phase, 'result');
+  assert.equal(s3.memoryRounds.length, 3);
+  const base3 = w3.length; // 三轮结果写回不计入撤销断言
+  h.api.undo(sid3, ia3); // result 态 → backup('d3') 正文 === 末轮 input → 回退取 backup
+  assert.deepEqual(s3.memoryRounds.map((r) => r.input), ['d1', 'd2']);
+  assert.equal(s3.optimized, true, '§3.1：链非空保持 optimized=true（连环撤销入口）');
+  assert.deepEqual(JSON.parse(h.lsBacking.get(MK(sid3))), s3.memoryRounds, '每步同步持久化键');
+  h.api.undo(sid3, ia3); // idle+optimized → backup('d3') !== 末轮 input('d2') → 取 last.input
+  assert.deepEqual(s3.memoryRounds.map((r) => r.input), ['d1']);
+  assert.equal(s3.optimized, true, '链仍非空 → 仍可继续撤销');
+  h.api.undo(sid3, ia3);
+  assert.deepEqual(w3.slice(base3), ['d3', 'd2', 'd1'], '§3.1：每步草稿回该轮 input（连环撤销逐轮回退）');
+  assert.deepEqual(s3.memoryRounds, []);
+  assert.equal(s3.optimized, false, '撤到链空 → 回首次态');
+  assert.equal(h.lsBacking.has(MK(sid3)), false, '链空即删持久化键');
+  const before = w3.length;
+  h.api.undo(sid3, ia3);
+  assert.equal(w3.length, before, '链空 + optimized=false → 撤销无动作（不得再写草稿）');
+  assert.equal(s3.phase, 'idle');
+
+  // ④ 刷新兜底：backup 已丢（结果键已消费/清除）但链从持久化恢复 → 回退取末轮 input
+  const h4 = loadHelpers({ memory: true, mode: 'standard' });
+  const sid4 = 'sess-undo-refresh';
+  const s4 = h4.api.storeFor(sid4);
+  s4.phase = 'idle';
+  s4.optimized = true;
+  s4.backup = '';
+  s4.memoryRounds = [{ input: 'r1', output: 'R1' }, { input: 'r2', output: 'R2' }];
+  h4.api.saveMemoryStore(sid4, s4.memoryRounds);
+  const w4 = [];
+  h4.api.undo(sid4, { setDraft: (v) => w4.push(v) });
+  assert.deepEqual(w4, ['r2'], '§3.1/§六：backup 为空 → 回退取末轮 input（斜杠前缀在该边缘丢失）');
+  assert.deepEqual(h4.api.storeFor(sid4).memoryRounds, [{ input: 'r1', output: 'R1' }]);
+  assert.equal(h4.api.storeFor(sid4).optimized, true, '链仍非空 → 可继续连环撤销');
+
+  // ⑤ 空链 + 空 backup：restore 为空串 → return 不动作（不得把「撤销」退化成静默清空）
+  const h5 = loadHelpers({ memory: true, mode: 'standard' });
+  const sid5 = 'sess-undo-empty';
+  const s5 = h5.api.storeFor(sid5);
+  s5.phase = 'idle';
+  s5.optimized = true;
+  s5.backup = '';
+  s5.memoryRounds = [];
+  const w5 = [];
+  const ia5 = { setDraft: (v) => w5.push(v) };
+  h5.api.undo(sid5, ia5);
+  assert.deepEqual(w5, [], '§3.1：restore === "" 则 return 不动作');
+  assert.equal(s5.phase, 'idle');
+  assert.equal(s5.optimized, true, '不动作 = 状态原样');
+  s5.phase = 'result';
+  h5.api.undo(sid5, ia5);
+  assert.deepEqual(w5, [], 'result 态但空链空 backup 同样不动作');
 });
 
 test('MEM-08 zero-answer(§2.7): 带 answers 但一题未答 → 按 skip 重跑，绝不发「既无 answers 又无 skip」的请求', async () => {
@@ -1356,58 +1454,671 @@ function collectText(el, out) {
   return acc;
 }
 
-test('V4 按钮三态: 首次 → ✨+模式标签；未改草稿 → 重新优化；已修改 → 继续优化；改回原样 → 重新优化', async () => {
+// ================= v4.2（task-4·§一/§3.2）：双键状态机 =================
+// onClick 目标必须可分辨（主键 undo vs enhance；副键 fresh 第 6 参）——记账包装 helpers 的
+// enhance/undo 后再装载组件（loadButton 装载时读取 api 属性，包装即生效），不靠源码字符串猜测。
+function loadButtonSpy(h, sessionId, opts) {
+  const calls = [];
+  const realEnhance = h.api.enhance;
+  const realUndo = h.api.undo;
+  h.api.enhance = function (...args) { calls.push({ fn: 'enhance', args }); return realEnhance.apply(null, args); };
+  h.api.undo = function (...args) { calls.push({ fn: 'undo', args }); return realUndo.apply(null, args); };
+  const b = loadButton(h, sessionId, opts);
+  return { calls, render: b.render, clearResultCalls: b.clearResultCalls };
+}
+const countOf = (src, needle) => src.split(needle).length - 1;
+// 邻近契约：a 之后 ≤max 字符内必须出现 b（替代正则，避免转义歧义）
+const windowHas = (src, a, b, max) => {
+  const i = src.indexOf(a);
+  if (i === -1) return false;
+  const j = src.indexOf(b, i);
+  return j !== -1 && j - i <= max;
+};
+const splitOf = (el) => collectEls(el, (x) => hasClass(x, 'dsh-enh-split'))[0];
+const mainBtnOf = (el) => collectEls(el, (x) => x.type === 'button' && x.props['aria-label'] === 'enhanceButton')[0];
+const auxBtnOf = (el) => collectEls(el, (x) => hasClass(x, 'dsh-enh-aux'))[0];
+const classEl = (el, cls) => collectEls(el, (x) => hasClass(x, cls))[0];
+const auxGlyphOf = (el) => {
+  const a = auxBtnOf(el);
+  const icon = a ? classEl(a, 'dsh-enh-aux-icon') : null;
+  return icon ? textOf(icon) : null;
+};
+const sentEnhances = (h) => h.hostStub.calls.filter((c) => c.method === 'enhance');
+const lastEnhanceArgs = (h) => {
+  const list = sentEnhances(h);
+  return list[list.length - 1].args;
+};
+
+test('V42-01 双键状态机·首次: ✨+模式短标签、无副键；主键 = enhance（不是 undo）', async () => {
   const h = loadHelpers({ memory: true, mode: 'standard' });
-  const sid = 'sess-tri';
-  const btn = loadButton(h, sid);
-  // 首次：无 btnContinue/btnRedo（✨ + 模式短标签态）
-  let texts = collectText(btn.render('草稿', 'plain'));
-  assert.equal(texts.includes('btnContinue'), false, '首次优化不得显示继续优化');
-  assert.equal(texts.includes('btnRedo'), false, '首次优化不得显示重新优化');
-  // 优化成功（结果 OUT 写回草稿）
-  const inputActions = { setDraft: () => {} };
-  const draftRef = { current: '草稿' };
-  h.hostStub.respond = () => ({ ok: true, text: 'OUT' });
-  h.api.enhance(sid, '草稿', inputActions, draftRef);
+  const sid = 'sess-v42-first';
+  const b = loadButtonSpy(h, sid);
+  const el = b.render('草稿', 'plain');
+  const main = mainBtnOf(el);
+  assert.ok(main, '主键必须仍为 button[aria-label=enhanceButton]');
+  assert.equal(auxBtnOf(el), undefined, '§3.2：optimized=false 不得渲染副键');
+  const texts = collectText(main);
+  assert.ok(texts.includes('✨') && texts.includes('standard'), '首次主键 = ✨ + 模式短标签');
+  assert.equal(texts.includes('btnRedo'), false, '首次不得显示「重新优化」');
+  assert.equal(texts.includes('btnContinue'), false, '首次不得显示「继续优化」');
+  assert.equal(texts.includes('result'), false, '首次不得显示「撤销优化」产物');
+  assert.equal(main.props.disabled, false, '非空草稿可点（guardPasses 通过）');
+  main.props.onClick();
   await flush();
-  // 优化成功后 phase='result'（撤销态）——一次「草稿≠enhanced/backup」的 render 让 effect 置回 idle
-  h.api.storeFor(sid).phase = 'idle'; // 优化成功后置 result（撤销态）——脱离后按钮回到空闲三态
-  // 未改草稿（= 最近优化结果正文）→ 重新优化
-  texts = collectText(btn.render('OUT', 'plain'));
-  assert.ok(texts.includes('btnRedo'), 'v4.4（V4）：草稿与最近优化结果逐字节一致 → 重新优化');
-  assert.equal(texts.includes('btnContinue'), false, '未改草稿不得显示继续优化');
-  // 修改草稿 → 继续优化
-  texts = collectText(btn.render('OUT 改', 'plain'));
-  assert.ok(texts.includes('btnContinue'), 'v4.4（V4）：草稿已修改 → 继续优化');
-  assert.equal(texts.includes('btnRedo'), false, '已修改不得显示重新优化');
-  // 改回原样（逐字节一致）→ 重新优化（与 host 行级 diff 同源：差异段为空 ⟺ 严格相等）
-  texts = collectText(btn.render('OUT', 'plain'));
-  assert.ok(texts.includes('btnRedo'), '改回原文 → 重新优化');
-  // 斜杠命令：前缀剥离后对比（/deploy OUT vs output=OUT → 重新优化）
-  texts = collectText(btn.render('/deploy OUT', 'plain'));
-  assert.ok(texts.includes('btnRedo'), '斜杠命令按正文对比（前缀不参与判定）');
-  // undo → 回到首次态（undo 仅在 result 态生效，手动置回）
-  h.api.storeFor(sid).phase = 'result';
-  h.api.undo(sid, { setDraft: () => {} });
-  texts = collectText(btn.render('草稿', 'plain'));
-  assert.equal(texts.includes('btnRedo'), false, 'undo 后回到首次态（optimized 复位）');
+  assert.equal(b.calls.length, 1, '主键必须触发一次动作');
+  assert.equal(b.calls[0].fn, 'enhance', '首次点击 = 现有 enhance');
+  assert.equal(b.calls[0].args[5], undefined, '首次不得走 fresh（第 6 参缺省）');
 });
 
-test('V4 按钮三态·无链回退: 记忆关的 lite/standard 以最近结果正文为基准（改了 → 继续；没改 → 重新）', async () => {
-  const h = loadHelpers({ memory: false, mode: 'standard' });
-  const sid = 'sess-noredo';
-  const btn = loadButton(h, sid);
+test('V42-02 双键状态机·result: 主=撤销优化（undo + titleResult）+ 副 ⟳（auxRedo）', async () => {
+  const h = loadHelpers({ memory: true, mode: 'standard' });
+  const sid = 'sess-v42-result';
+  h.api.setActiveSession(sid);
   const inputActions = { setDraft: () => {} };
-  const draftRef = { current: '草稿' };
-  h.hostStub.respond = () => ({ ok: true, text: 'OUT2' });
-  h.api.enhance(sid, '草稿', inputActions, draftRef);
+  const draftRef = { current: '草稿R' };
+  h.hostStub.respond = () => ({ ok: true, text: 'OUTR' });
+  h.api.enhance(sid, '草稿R', inputActions, draftRef);
   await flush();
-  assert.deepEqual(h.api.storeFor(sid).memoryRounds, [], '记忆关 → 不写链');
-  h.api.storeFor(sid).phase = 'idle'; // 脱离 result 态（见 V4 主用例注释）
-  let texts = collectText(btn.render('OUT2', 'plain'));
-  assert.ok(texts.includes('btnRedo'), '无链回退 s.enhanced 剥前缀：未改 → 重新优化');
-  texts = collectText(btn.render('OUT2 改', 'plain'));
-  assert.ok(texts.includes('btnContinue'), '无链：已修改 → 继续优化');
+  assert.equal(h.api.storeFor(sid).phase, 'result');
+  const b = loadButtonSpy(h, sid);
+  const el = b.render('OUTR', 'plain'); // 结果已写回草稿 → 未改态（D === L）
+  const main = mainBtnOf(el);
+  assert.equal(collectText(main).join(''), 'result', '§3.2：result 态主键文案 = t(result)（撤销优化）');
+  assert.equal(main.props.title, 'titleResult');
+  assert.equal(main.props.disabled, false, '撤销态恒可点（disabled=false）');
+  assert.ok(hasClass(main, 'dsh-enh-btn-result'), '撤销态必须带 dsh-enh-btn-result');
+  const aux = auxBtnOf(el);
+  assert.ok(aux, '§3.2：optimized && phase=result 必须渲染副键');
+  assert.equal(aux.type, 'button');
+  assert.equal(aux.props.tabIndex, -1, '副键不可 Tab 聚焦');
+  assert.equal(aux.props.title, 'auxRedo');
+  assert.equal(aux.props['aria-label'], 'auxRedo');
+  assert.equal(auxGlyphOf(el), '⟳', '未改态副键字形 = ⟳（从零重新优化）');
+  main.props.onClick();
+  await flush();
+  assert.equal(b.calls[0].fn, 'undo', '§3.2：result / idle 未改共用「撤销优化」产物 → 主键 = undo');
+  assert.equal(h.api.storeFor(sid).phase, 'idle');
+  assert.equal(h.api.storeFor(sid).optimized, false, '链空 → 回首次态');
+});
+
+test('V42-03 双键状态机·未改 idle: 与 result 共用撤销产物；副键 ⟳ 点击 = fresh（第 6 参 true，不带 memory/answers）', async () => {
+  const h = loadHelpers({ memory: true, mode: 'standard' });
+  const sid = 'sess-v42-idle';
+  h.api.setActiveSession(sid);
+  const inputActions = { setDraft: () => {} };
+  const draftRef = { current: '草稿I' };
+  h.hostStub.respond = () => ({ ok: true, text: 'OUTI' });
+  h.api.enhance(sid, '草稿I', inputActions, draftRef);
+  await flush();
+  const s = h.api.storeFor(sid);
+  s.phase = 'idle'; // 结果已被消费（撤销入口脱离 result 态）
+  const b = loadButtonSpy(h, sid);
+  const el = b.render('OUTI', 'plain');
+  const main = mainBtnOf(el);
+  assert.equal(collectText(main).join(''), 'result', '§3.2：idle + 草稿正文 === 末轮 output → 同一撤销产物');
+  assert.equal(main.props.title, 'titleResult');
+  assert.equal(main.props.disabled, false);
+  assert.ok(hasClass(main, 'dsh-enh-btn-result'), '撤销态类名与 result 态一致');
+  const aux = auxBtnOf(el);
+  assert.equal(auxGlyphOf(el), '⟳');
+  assert.equal(aux.props.title, 'auxRedo');
+  aux.props.onClick();
+  await flush();
+  assert.equal(b.calls.length, 1);
+  assert.equal(b.calls[0].fn, 'enhance', '未改态副键 = 从零单次（fresh）');
+  assert.equal(b.calls[0].args[5], true, '§3.2：副键 fresh 必须显式传第 6 参 true');
+  const sent = lastEnhanceArgs(h);
+  assert.equal(sent.memory, undefined, '§3.1-1：fresh 请求不得携带 memory');
+  assert.equal(sent.answers, undefined, '§3.1-1：fresh 请求不得携带 answers');
+});
+
+test('V42-04 双键状态机·已改 + 记忆开: 主=继续优化（普通 enhance）+ 副 ↺（undo）；改回原样/斜杠前缀 → 回撤销+⟳', async () => {
+  const h = loadHelpers({ memory: true, mode: 'standard' });
+  const sid = 'sess-v42-cont';
+  h.api.setActiveSession(sid);
+  const inputActions = { setDraft: () => {} };
+  const draftRef = { current: '草稿C' };
+  h.hostStub.respond = () => ({ ok: true, text: 'OUTC' });
+  h.api.enhance(sid, '草稿C', inputActions, draftRef);
+  await flush();
+  h.api.storeFor(sid).phase = 'idle';
+  const b = loadButtonSpy(h, sid);
+  // 已修改（记忆开 → 继续优化）
+  let el = b.render('OUTC 改', 'plain');
+  let main = mainBtnOf(el);
+  assert.equal(collectText(main).join(''), 'btnContinue', '§3.2：已改 + 记忆开 → 继续优化');
+  assert.equal(main.props.title, 'titleContinue');
+  assert.equal(main.props.disabled, false);
+  assert.equal(hasClass(main, 'dsh-enh-btn-result'), false, '继续优化不得带撤销态类名');
+  assert.equal(auxGlyphOf(el), '↺', '已改态副键字形 = ↺（撤销优化）');
+  assert.equal(auxBtnOf(el).props.title, 'auxUndo');
+  assert.equal(auxBtnOf(el).props['aria-label'], 'auxUndo');
+  // 改回原样（逐字节一致）→ 回撤销 + ⟳
+  el = b.render('OUTC', 'plain');
+  main = mainBtnOf(el);
+  assert.equal(collectText(main).join(''), 'result', '§5.1：改回原样 → 回「撤销优化」');
+  assert.equal(main.props.title, 'titleResult');
+  assert.equal(auxGlyphOf(el), '⟳', '副键字形随判定回到 ⟳');
+  // 斜杠命令：前缀剥离后对比（/deploy OUTC ≡ OUTC）
+  el = b.render('/deploy OUTC', 'plain');
+  assert.equal(collectText(mainBtnOf(el)).join(''), 'result', '斜杠命令按正文对比（前缀不参与判定）');
+  assert.equal(auxGlyphOf(el), '⟳');
+  // 副键 ↺ = undo（不带 fresh）
+  el = b.render('OUTC 改', 'plain');
+  auxBtnOf(el).props.onClick();
+  await flush();
+  assert.equal(b.calls[0].fn, 'undo', '§3.2：已改态副键 = undo');
+  assert.equal(h.api.storeFor(sid).optimized, false, '链空 → 回首次态');
+  // 主键 = 普通 enhance（继续优化；携带链，第 6 参缺省）
+  const sid2 = 'sess-v42-cont2';
+  h.api.setActiveSession(sid2);
+  const dr2 = { current: 'c2' };
+  h.api.enhance(sid2, 'c2', inputActions, dr2);
+  await flush();
+  h.api.storeFor(sid2).phase = 'idle';
+  const b2 = loadButtonSpy(h, sid2);
+  const el2 = b2.render('OUTC 改', 'plain');
+  assert.equal(collectText(mainBtnOf(el2)).join(''), 'btnContinue');
+  mainBtnOf(el2).props.onClick();
+  await flush();
+  assert.equal(b2.calls[0].fn, 'enhance', '§3.2：已改 + 记忆开主键 = 普通 enhance');
+  assert.equal(b2.calls[0].args[5], undefined, '主键普通路径不得传 fresh');
+  const sent2 = lastEnhanceArgs(h);
+  assert.ok(sent2.memory && Array.isArray(sent2.memory.rounds) && sent2.memory.rounds.length >= 1,
+    '普通 enhance 必须携带记忆链（继续优化语义）');
+});
+
+test('V42-05 双键状态机·已改 + 记忆关: 主=重新优化（fresh，第 6 参 true）+ 副 ↺（undo）', async () => {
+  const h = loadHelpers({ memory: false, mode: 'standard' });
+  const sid = 'sess-v42-redo';
+  h.api.setActiveSession(sid);
+  const inputActions = { setDraft: () => {} };
+  const draftRef = { current: 'c3' };
+  h.hostStub.respond = () => ({ ok: true, text: 'O3' });
+  h.api.enhance(sid, 'c3', inputActions, draftRef);
+  await flush();
+  const s = h.api.storeFor(sid);
+  assert.deepEqual(s.memoryRounds, [], '记忆关 → 无链（基准回退 s.enhanced 剥前缀）');
+  assert.equal(s.enhanced, 'O3');
+  s.phase = 'idle';
+  const b = loadButtonSpy(h, sid);
+  let el = b.render('O3 改', 'plain');
+  const main = mainBtnOf(el);
+  assert.equal(collectText(main).join(''), 'btnRedo', '§3.2：已改 + 记忆关 → 重新优化');
+  assert.equal(main.props.title, 'titleRedo');
+  assert.equal(main.props.disabled, false);
+  assert.equal(hasClass(main, 'dsh-enh-btn-result'), false, '重新优化不是撤销态');
+  assert.equal(auxGlyphOf(el), '↺');
+  assert.equal(auxBtnOf(el).props.title, 'auxUndo');
+  // 副键 ↺ = undo
+  auxBtnOf(el).props.onClick();
+  await flush();
+  assert.equal(b.calls[0].fn, 'undo', '§3.2：已改态副键 = undo（记忆关亦然）');
+  // 恢复未消费态，再验主键 = fresh
+  s.phase = 'idle';
+  s.optimized = true;
+  s.enhanced = 'O3';
+  s.backup = 'c3';
+  s.memoryRounds = [];
+  el = b.render('O3 改', 'plain');
+  mainBtnOf(el).props.onClick();
+  await flush();
+  const freshCall = b.calls.filter((c) => c.fn === 'enhance')[0];
+  assert.ok(freshCall, '主键必须触发 enhance');
+  assert.equal(freshCall.args[5], true, '§3.2：记忆关已改主键 = fresh（天然从零）');
+  const sent = lastEnhanceArgs(h);
+  assert.equal(sent.memory, undefined, '§3.1-1：fresh 请求不带 memory');
+  assert.equal(sent.answers, undefined, '§3.1-1：fresh 请求不带 answers');
+});
+
+test('V42-06 双键状态机·改回原样: 修改 → 继续优化（↺）；逐字节还原 → 撤销优化（⟳ 复活，点击 = fresh）', async () => {
+  const h = loadHelpers({ memory: true, mode: 'standard' });
+  const sid = 'sess-v42-back';
+  h.api.setActiveSession(sid);
+  const inputActions = { setDraft: () => {} };
+  const draftRef = { current: 'c6' };
+  h.hostStub.respond = () => ({ ok: true, text: 'O6' });
+  h.api.enhance(sid, 'c6', inputActions, draftRef);
+  await flush();
+  h.api.storeFor(sid).phase = 'idle';
+  const b = loadButtonSpy(h, sid);
+  let el = b.render('O6 改', 'plain');
+  assert.equal(collectText(mainBtnOf(el)).join(''), 'btnContinue');
+  assert.equal(auxGlyphOf(el), '↺');
+  el = b.render('O6 改后还原但仍不同', 'plain');
+  assert.equal(collectText(mainBtnOf(el)).join(''), 'btnContinue', '仍不相等 → 继续优化');
+  el = b.render('O6', 'plain');
+  assert.equal(collectText(mainBtnOf(el)).join(''), 'result', '§5.1：改回原样 → 回撤销优化');
+  assert.equal(auxGlyphOf(el), '⟳', '副键字形随判定回 ⟳');
+  assert.equal(auxBtnOf(el).props.title, 'auxRedo');
+  auxBtnOf(el).props.onClick();
+  await flush();
+  assert.equal(b.calls[0].fn, 'enhance', '还原后副键 = fresh');
+  assert.equal(b.calls[0].args[5], true);
+});
+
+test('V42-07 双键状态机·保底与隐藏: L === null 按「已改」处理；enhancing / clarify 态不渲染副键', () => {
+  const run = (mode, memory) => {
+    const h = loadHelpers({ memory, mode });
+    const sid = 'sess-v42-fallback-' + mode + '-' + String(memory);
+    const s = h.api.storeFor(sid);
+    s.phase = 'idle';
+    s.optimized = true;
+    s.memoryRounds = []; // 无链
+    s.enhanced = '';     // 且无最近结果 → lastOutput === null（§一 保底）
+    const b = loadButtonSpy(h, sid);
+    return b.render('任意草稿', 'plain');
+  };
+  // 记忆开：按「已改」→ 主键继续优化 + 副键 ↺
+  let el = run('standard', true);
+  assert.equal(collectText(mainBtnOf(el)).join(''), 'btnContinue', '§一：L === null 按「已改」处理（保底，实际不可达）');
+  assert.equal(auxGlyphOf(el), '↺', '已改 → 副键 ↺（撤销）');
+  // 记忆关：按「已改」→ 主键重新优化 + 副键 ↺
+  el = run('standard', false);
+  assert.equal(collectText(mainBtnOf(el)).join(''), 'btnRedo', 'L === null + 记忆关 → 重新优化（fresh）');
+  assert.equal(auxGlyphOf(el), '↺');
+  // enhancing 态（optimized 仍为 true，如从零重跑在途）：副键必须隐藏，主键 = 既有 busy 产物
+  const h3 = loadHelpers({ memory: true, mode: 'standard' });
+  const sid3 = 'sess-v42-busy';
+  const s3 = h3.api.storeFor(sid3);
+  s3.phase = 'enhancing';
+  s3.optimized = true;
+  s3.memoryRounds = [{ input: 'a', output: 'A' }];
+  const b3 = loadButtonSpy(h3, sid3);
+  const busy = b3.render('a', 'plain');
+  assert.equal(auxBtnOf(busy), undefined, '§3.2：enhancing 态不得渲染副键');
+  assert.ok(hasClass(mainBtnOf(busy), 'dsh-enh-btn-busy'), 'enhancing 主键仍是既有 busy 产物');
+  assert.equal(mainBtnOf(busy).props.title, 'titleBusy');
+  // clarify 态（optimized 仍为 true）：副键必须隐藏，主键 = 既有 clarify 产物
+  const h4 = loadHelpers({ memory: true, mode: 'expert' });
+  const sid4 = 'sess-v42-clarifyhide';
+  const s4 = h4.api.storeFor(sid4);
+  s4.phase = 'clarify';
+  s4.optimized = true;
+  s4.clarify = [{ q: 'Q1', options: ['a', 'b'] }];
+  const b4 = loadButtonSpy(h4, sid4);
+  const clarifyEl = b4.render('草稿', 'plain');
+  assert.equal(auxBtnOf(clarifyEl), undefined, '§3.2：clarify 态不得渲染副键');
+  assert.ok(hasClass(mainBtnOf(clarifyEl), 'dsh-enh-btn-clarify'), 'clarify 主键仍是既有 clarify 产物');
+  assert.equal(mainBtnOf(clarifyEl).props.title, 'titleClarify');
+});
+
+test('V42-10 无链回退（重写 V4·无链）: 记忆关 lite/standard 链空但 s.enhanced 在 → 基准 = 最近结果正文（含剥前缀）', async () => {
+  for (const mode of ['standard', 'lite']) {
+    const h = loadHelpers({ memory: false, mode });
+    const sid = 'sess-v42-nolink-' + mode;
+    h.api.setActiveSession(sid);
+    const inputActions = { setDraft: () => {} };
+    const draftRef = { current: '/go 草稿N' };
+    h.hostStub.respond = () => ({ ok: true, text: 'OUT2' });
+    h.api.enhance(sid, '/go 草稿N', inputActions, draftRef);
+    await flush();
+    const s = h.api.storeFor(sid);
+    assert.deepEqual(s.memoryRounds, [], mode + '：记忆关 → 不写链');
+    assert.equal(s.enhanced, '/go OUT2', mode + '：结果含命令前缀写回');
+    s.phase = 'idle';
+    const b = loadButtonSpy(h, sid);
+    let el = b.render('/go OUT2', 'plain');
+    assert.equal(collectText(mainBtnOf(el)).join(''), 'result', mode + '：无链基准 = s.enhanced 剥前缀 → 未改 → 撤销优化');
+    assert.equal(auxGlyphOf(el), '⟳');
+    el = b.render('/go OUT2 改', 'plain');
+    assert.equal(collectText(mainBtnOf(el)).join(''), 'btnRedo', mode + '：无链 + 已改 + 记忆关 → 重新优化');
+    assert.equal(auxGlyphOf(el), '↺', mode + '：已改 → 副键 ↺');
+  }
+});
+
+// ================= v4.2-r2（task-4·§1.1 修订）：独立验证 D-1/D-2 反例 + 覆盖矩阵 =================
+test('V42-33 重新优化载荷牙齿: 记忆关 + 预置全局澄清记录 + 已改 ⇒ fresh 请求不带 answers / memory', async () => {
+  const h = loadHelpers({ memory: false, mode: 'standard' });
+  const sid = 'sess-v42-redo-payload';
+  h.api.setActiveSession(sid);
+  const inputActions = { setDraft: () => {} };
+  const draftRef = { current: 'c5' };
+  const prior = [{ q: 'Q1', a: 'a', via: 'option' }];
+  h.lsBacking.set(CK(sid), JSON.stringify(prior)); // 全局已入库澄清记录（记忆关不影响它）
+  const s = h.api.storeFor(sid);
+  assert.deepEqual(s.clarifyAnswers, prior, '前置：全局澄清记录在 store 中');
+  h.hostStub.respond = () => ({ ok: true, text: 'O5' });
+  h.api.enhance(sid, 'c5', inputActions, draftRef);
+  await flush();
+  // 反证（牙齿）：同一 store 上的**非 fresh**请求确实会带上这份全局记录
+  assert.deepEqual(sentEnhances(h)[0].args.answers, prior, '反证：非 fresh 路径会携带全局旧澄清记录（故下面的 undefined 非空断言）');
+  assert.deepEqual(s.memoryRounds, [], '记忆关 → 无链');
+  s.phase = 'idle';
+  const b = loadButtonSpy(h, sid);
+  const el = b.render('O5 改', 'plain');
+  assert.equal(collectText(mainBtnOf(el)).join(''), 'btnRedo', '前置：主键 = 重新优化（记忆关 + 已改）');
+  mainBtnOf(el).props.onClick();
+  await flush();
+  const sent = lastEnhanceArgs(h);
+  assert.equal(sent.answers, undefined, '★ 载荷牙齿：主键入口少传第 6 参时会静默带上全局旧澄清记录（必须 undefined）');
+  assert.equal(sent.memory, undefined, '★ 载荷牙齿：fresh 请求不得携带 memory');
+  assert.equal(b.calls[0].args[5], true, '第 6 参确为 fresh（行为与载荷双断言）');
+});
+
+test('V42-34 r2 反例 D-1·混合态: 链尾早于最近结果 ⇒ 主=撤销 + 副=⟳；undo 回 backup 且不 pop 链', async () => {
+  const h = loadHelpers({ memory: true, mode: 'standard' });
+  const sid = 'sess-v42-mixed';
+  const s = h.api.storeFor(sid);
+  s.memoryRounds = [{ input: 'A', output: 'O1' }]; // 旧轮（早于最近一次结果）
+  s.enhanced = 'O2';                               // 最近结果（链尾 ≠ 最近结果 ⇒ 混合态）
+  s.backup = 'B';
+  s.phase = 'result';
+  s.optimized = true;
+  h.api.saveMemoryStore(sid, s.memoryRounds);
+  const writes = [];
+  const b = loadButtonSpy(h, sid, { inputActions: { setDraft: (v) => writes.push(v) } });
+  const el = b.render('O2', 'plain');
+  assert.equal(collectText(mainBtnOf(el)).join(''), 'result', '§1.1①：L = 最近结果 → 草稿未改 ⇒ 撤销优化（旧「链优先」口径会误判已改）');
+  assert.equal(mainBtnOf(el).props.title, 'titleResult');
+  assert.ok(auxBtnOf(el), '副键必须渲染');
+  assert.equal(auxGlyphOf(el), '⟳', '§1.1①/②：副键 ⟳（与主键 undo 同源；旧口径落 ↺ ⇒ 双 undo 窗口）');
+  assert.equal(auxBtnOf(el).props.title, 'auxRedo');
+  mainBtnOf(el).props.onClick();
+  assert.deepEqual(writes, ['B'], '§1.1③：live 非空 ⇒ 回退取 backup = B（不是链末 input A）');
+  assert.deepEqual(s.memoryRounds, [{ input: 'A', output: 'O1' }], '§1.1③：链末轮不属本轮（backup 正文 ≠ 链末 input）⇒ 不 pop');
+  assert.equal(s.optimized, true, '链非空 ⇒ optimized 保持 true（该行仍是可撤销态）');
+  assert.equal(s.phase, 'idle');
+  assert.equal(s.enhanced, '');
+  assert.deepEqual(JSON.parse(h.lsBacking.get(MK(sid))), [{ input: 'A', output: 'O1' }], '不 pop ⇒ 持久化键原样不动');
+  // 混合态 + phase='idle'（结果已被消费）：同「未改」行 —— 主=撤销 + 副 ⟳（旧实现会给 btnContinue + ↺）
+  const h2 = loadHelpers({ memory: true, mode: 'standard' });
+  const sid2 = 'sess-v42-mixed-idle';
+  const s2 = h2.api.storeFor(sid2);
+  s2.memoryRounds = [{ input: 'A', output: 'O1' }];
+  s2.enhanced = 'O2';
+  s2.backup = 'B';
+  s2.phase = 'idle';
+  s2.optimized = true;
+  const b2 = loadButtonSpy(h2, sid2);
+  const el2 = b2.render('O2', 'plain');
+  assert.equal(collectText(mainBtnOf(el2)).join(''), 'result', '§1.1①：混合态 + idle + 草稿未改 ⇒ 仍是撤销优化行');
+  assert.equal(mainBtnOf(el2).props.title, 'titleResult');
+  assert.equal(auxGlyphOf(el2), '⟳', '§1.1①/②：混合态 idle 的副键同样是 ⟳');
+  assert.equal(auxBtnOf(el2).props.title, 'auxRedo');
+  // 混合态下副键 ⟳ 仍是从零入口：6 参 + 载荷无 memory/answers
+  h2.hostStub.respond = () => ({ ok: true, text: 'O2F' });
+  auxBtnOf(el2).props.onClick();
+  await flush();
+  assert.equal(b2.calls[0].fn, 'enhance', '混合态副键 = fresh（从零单次）');
+  assert.equal(b2.calls[0].args[5], true, '§3.2：第 6 参 true');
+  const sent = lastEnhanceArgs(h2);
+  assert.equal(sent.memory, undefined, '§3.1-1：混合态 ⟳ 同样不带 memory');
+  assert.equal(sent.answers, undefined, '§3.1-1：混合态 ⟳ 同样不带 answers');
+});
+
+test('V42-35 r2 反例 D-2: 模型输出自带 /cmd 前缀 ⇒ 草稿未改仍判「撤销优化 + ⟳」', async () => {
+  const h = loadHelpers({ memory: true, mode: 'standard' });
+  const sid = 'sess-v42-d2';
+  h.api.setActiveSession(sid);
+  const inputActions = { setDraft: () => {} };
+  const draftRef = { current: '草稿D2' };
+  h.hostStub.respond = () => ({ ok: true, text: '/deploy OUT2' }); // 模型输出自身以 /deploy 开头
+  h.api.enhance(sid, '草稿D2', inputActions, draftRef);
+  await flush();
+  const s = h.api.storeFor(sid);
+  assert.equal(s.enhanced, '/deploy OUT2', '草稿无命令前缀 ⇒ 结果逐字写回');
+  assert.deepEqual(s.memoryRounds, [{ input: '草稿D2', output: '/deploy OUT2' }], '链末 output 同样以 /deploy 开头（D-2 前提）');
+  s.phase = 'idle';
+  const b = loadButtonSpy(h, sid);
+  const el = b.render('/deploy OUT2', 'plain');
+  assert.equal(collectText(mainBtnOf(el)).join(''), 'result', '§1.1①：L = draftBodyOf(s.enhanced) = OUT2 = D ⇒ 未改（旧「链优先」口径误判已改）');
+  assert.equal(auxGlyphOf(el), '⟳', '§1.1①：副键 ⟳');
+  assert.equal(auxBtnOf(el).props.title, 'auxRedo');
+});
+
+test('V42-36 r2 undo 覆盖矩阵: 七格逐格断言草稿写入值 + 链变化 + optimized + 持久化键', () => {
+  const seed = (opts) => {
+    const h = loadHelpers({ memory: opts.memory, mode: 'standard' });
+    const sid = opts.sid;
+    const s = h.api.storeFor(sid);
+    s.phase = opts.phase;
+    s.optimized = opts.optimized;
+    s.backup = opts.backup;
+    s.enhanced = opts.enhanced;
+    s.memoryRounds = opts.rounds.map((x) => ({ input: x[0], output: x[1] }));
+    if (s.memoryRounds.length > 0) h.api.saveMemoryStore(sid, s.memoryRounds);
+    const writes = [];
+    h.api.undo(sid, { setDraft: (v) => writes.push(v) });
+    const mk = h.lsBacking.has(MK(sid)) ? JSON.parse(h.lsBacking.get(MK(sid))) : null;
+    return { h, s, writes, mk };
+  };
+  // ① result·记忆开：live 非空 + backup 与链末 input 同源 ⇒ 回退 backup + pop
+  let r = seed({ sid: 'undo-m1', memory: true, phase: 'result', optimized: true, backup: 'd1', enhanced: 'O1', rounds: [['d1', 'O1']] });
+  assert.deepEqual(r.writes, ['d1'], '① 回退取 backup');
+  assert.deepEqual(r.s.memoryRounds, [], '① pop 一轮');
+  assert.equal(r.s.optimized, false, '① 链空 ⇒ 回首次态');
+  assert.equal(r.h.lsBacking.has(MK('undo-m1')), false, '① pop 后空链即删键');
+  assert.equal(r.s.phase, 'idle', '① 一律落 idle');
+  assert.equal(r.s.enhanced, '', '① 清最近结果');
+  // ② result·记忆关：无链 ⇒ 回退 backup、不 pop、optimized=false
+  r = seed({ sid: 'undo-m2', memory: false, phase: 'result', optimized: true, backup: 'd2', enhanced: 'O2', rounds: [] });
+  assert.deepEqual(r.writes, ['d2'], '② 无链 ⇒ 只有一个回退点 backup');
+  assert.deepEqual(r.s.memoryRounds, []);
+  assert.equal(r.s.optimized, false, '② 链空 ⇒ 回首次态');
+  assert.equal(r.mk, null, '② 无链无键');
+  // ③ idle 已改：结果仍在（live）⇒ 放开撤销、回退 backup + pop
+  r = seed({ sid: 'undo-m3', memory: true, phase: 'idle', optimized: true, backup: 'c', enhanced: 'O', rounds: [['c', 'O']] });
+  assert.deepEqual(r.writes, ['c'], '③ idle + optimized ⇒ 放开撤销（§3.1 前置）');
+  assert.deepEqual(r.s.memoryRounds, []);
+  assert.equal(r.s.optimized, false);
+  // ④ 3 轮连环撤销：每步回该轮起点；前两步链非空保持 optimized=true，第三步链空复位
+  const h4 = loadHelpers({ memory: true, mode: 'standard' });
+  const s4 = h4.api.storeFor('undo-m4');
+  s4.phase = 'result';
+  s4.optimized = true;
+  s4.backup = 'd3';
+  s4.enhanced = 'O3';
+  s4.memoryRounds = [['d1', 'O1'], ['d2', 'O2'], ['d3', 'O3']].map((x) => ({ input: x[0], output: x[1] }));
+  h4.api.saveMemoryStore('undo-m4', s4.memoryRounds);
+  const w4 = [];
+  const ia4 = { setDraft: (v) => w4.push(v) };
+  h4.api.undo('undo-m4', ia4);
+  assert.deepEqual(w4, ['d3'], '④-1 live ⇒ 回 backup（= 末轮起点）');
+  assert.equal(s4.memoryRounds.length, 2);
+  assert.equal(s4.optimized, true, '④-1 链非空 ⇒ 仍可继续撤销');
+  h4.api.undo('undo-m4', ia4);
+  assert.deepEqual(w4, ['d3', 'd2'], '④-2 live 已清 ⇒ 回末轮 input');
+  assert.equal(s4.memoryRounds.length, 1);
+  assert.equal(s4.optimized, true);
+  h4.api.undo('undo-m4', ia4);
+  assert.deepEqual(w4, ['d3', 'd2', 'd1'], '④-3 逐轮回退');
+  assert.deepEqual(s4.memoryRounds, []);
+  assert.equal(s4.optimized, false, '④-3 撤到链空 ⇒ 回首次态');
+  assert.equal(h4.lsBacking.has(MK('undo-m4')), false, '④-3 空链即删键');
+  // ⑤ 刷新兜底：backup 与 live 均空 + 链非空 ⇒ 回末轮 input + pop
+  r = seed({ sid: 'undo-m5', memory: true, phase: 'idle', optimized: true, backup: '', enhanced: '', rounds: [['r1', 'R1'], ['r2', 'R2']] });
+  assert.deepEqual(r.writes, ['r2'], '⑤ backup 空 ⇒ 回退末轮 input');
+  assert.deepEqual(r.s.memoryRounds, [{ input: 'r1', output: 'R1' }]);
+  assert.equal(r.s.optimized, true, '⑤ 链非空 ⇒ 保持可撤销');
+  assert.deepEqual(r.mk, [{ input: 'r1', output: 'R1' }], '⑤ pop 即同步持久化键');
+  // ⑥ 混合态（链尾 ≠ 最近结果）：回退 backup、不 pop、optimized 保持
+  r = seed({ sid: 'undo-m6', memory: true, phase: 'result', optimized: true, backup: 'B', enhanced: 'O2', rounds: [['A', 'O1']] });
+  assert.deepEqual(r.writes, ['B'], '⑥ 混合态回退 backup（不是链末 input A）');
+  assert.deepEqual(r.s.memoryRounds, [{ input: 'A', output: 'O1' }], '⑥ 不 pop（链末轮不属本轮）');
+  assert.equal(r.s.optimized, true, '⑥ 链非空 ⇒ 保持 true');
+  assert.deepEqual(r.mk, [{ input: 'A', output: 'O1' }], '⑥ 不 pop ⇒ 持久化键不动');
+  // ⑦ 空链 + 空 backup + 空 live：零副作用（不写空草稿、不动状态）
+  r = seed({ sid: 'undo-m7', memory: true, phase: 'idle', optimized: true, backup: '', enhanced: '', rounds: [] });
+  assert.deepEqual(r.writes, [], '⑦ restore === "" ⇒ 不动作');
+  assert.equal(r.s.phase, 'idle');
+  assert.equal(r.s.optimized, true);
+  assert.deepEqual(r.s.memoryRounds, []);
+  // ⑦b result 态但 backup 空、live 非空、无链 ⇒ restore 仍为空 ⇒ 零副作用
+  r = seed({ sid: 'undo-m7b', memory: false, phase: 'result', optimized: true, backup: '', enhanced: 'O', rounds: [] });
+  assert.deepEqual(r.writes, [], '⑦b live 非空但 backup 空且无链 ⇒ restore 空 ⇒ 不动作');
+  assert.equal(r.s.phase, 'result', '⑦b 不动作 ⇒ 状态原样');
+  assert.equal(r.s.optimized, true);
+});
+
+test('V42-37 判据同源（r3 逐态绝对期望）: 主键产物 + 副键字形；result 且 D ≠ L 仍须是可点的撤销优化', () => {
+  // v4.2-r3（§1.1② 订正）：逐态**绝对期望**（title / 字形 / disabled）——旧版「相对断言」
+  //（mainIsUndo === auxIsRedo）对变异 m8（isUndoState 删掉 phase === 'result' 析取项）无牙：
+  // 它把主副键「一起」判错，相对关系仍成立。析取项是承重结构 ⇒ 必须逐态钉死。
+  const cases = [
+    { name: 'result-记忆开', memory: true, phase: 'result', backup: 'd', enhanced: 'O', rounds: [['d', 'O']], draft: 'O', title: 'titleResult', glyph: '⟳' },
+    { name: 'result-记忆关', memory: false, phase: 'result', backup: 'd', enhanced: 'O', rounds: [], draft: 'O', title: 'titleResult', glyph: '⟳' },
+    // m8 三格（result 态而 D ≠ L：草稿未回灌 / 编辑中一帧 / 回灌草稿 === backup）——
+    // isUntouched=false 但 phase 承重 ⇒ 主键仍须是**可点的**「撤销优化」（titleResult + disabled=false）
+    { name: 'result-草稿未回灌', memory: true, phase: 'result', backup: 'd', enhanced: 'O', rounds: [['d', 'O']], draft: '', title: 'titleResult', glyph: '⟳', disabled: false },
+    { name: 'result-编辑中一帧', memory: true, phase: 'result', backup: 'd', enhanced: 'O', rounds: [['d', 'O']], draft: 'O 改', title: 'titleResult', glyph: '⟳', disabled: false },
+    { name: 'result-回灌草稿等于backup', memory: true, phase: 'result', backup: 'd', enhanced: 'O', rounds: [['d', 'O']], draft: 'd', title: 'titleResult', glyph: '⟳', disabled: false },
+    { name: '混合态', memory: true, phase: 'result', backup: 'B', enhanced: 'O2', rounds: [['A', 'O1']], draft: 'O2', title: 'titleResult', glyph: '⟳' },
+    { name: '混合态-idle', memory: true, phase: 'idle', backup: 'B', enhanced: 'O2', rounds: [['A', 'O1']], draft: 'O2', title: 'titleResult', glyph: '⟳' },
+    { name: 'idle-未改-记忆开', memory: true, phase: 'idle', backup: 'd', enhanced: 'O', rounds: [['d', 'O']], draft: 'O', title: 'titleResult', glyph: '⟳' },
+    { name: 'D-2-输出自带命令前缀', memory: true, phase: 'idle', backup: 'c', enhanced: '/deploy O', rounds: [['c', '/deploy O']], draft: '/deploy O', title: 'titleResult', glyph: '⟳' },
+    // §1.1① 回退分支：enhanced === '' + 链非空 ⇒ L 取链末 output（草稿 = 该 output ⇒ 未改）
+    { name: '回退分支-链非空-enhanced空', memory: true, phase: 'idle', backup: '', enhanced: '', rounds: [['d', 'O']], draft: 'O', title: 'titleResult', glyph: '⟳' },
+    { name: 'idle-已改-记忆开', memory: true, phase: 'idle', backup: 'd', enhanced: 'O', rounds: [['d', 'O']], draft: 'O 改', title: 'titleContinue', glyph: '↺' },
+    { name: 'idle-已改-记忆关', memory: false, phase: 'idle', backup: 'd', enhanced: 'O', rounds: [], draft: 'O 改', title: 'titleRedo', glyph: '↺' },
+  ];
+  for (const c of cases) {
+    const h = loadHelpers({ memory: c.memory, mode: 'standard' });
+    const sid = 'sess-v42-inv-' + c.name;
+    const s = h.api.storeFor(sid);
+    s.phase = c.phase;
+    s.optimized = true;
+    s.backup = c.backup;
+    s.enhanced = c.enhanced;
+    s.memoryRounds = c.rounds.map((x) => ({ input: x[0], output: x[1] }));
+    const b = loadButtonSpy(h, sid);
+    const el = b.render(c.draft, 'plain');
+    const aux = auxBtnOf(el);
+    assert.ok(aux, c.name + '：optimized + result/idle 必须渲染副键');
+    const main = mainBtnOf(el);
+    assert.equal(main.props.title, c.title, c.name + '：§1.1② 主键产物（逐态绝对期望；m8 变异在此变红）');
+    assert.equal(auxGlyphOf(el), c.glyph, c.name + '：§1.1② 副键字形必须与主键同源（不得「主=撤销 且 副=↺」）');
+    assert.equal(aux.props.title, c.glyph === '⟳' ? 'auxRedo' : 'auxUndo', c.name + '：副键 title/aria 与字形一致');
+    if (c.disabled !== undefined) {
+      assert.equal(main.props.disabled, c.disabled, c.name + '：撤销优化键必须可点（m8 下退化为 disabled 的继续优化）');
+    }
+    if (c.title === 'titleResult') {
+      assert.equal(collectText(main).join(''), 'result', c.name + '：撤销文案 = t(result)');
+      assert.ok(hasClass(main, 'dsh-enh-btn-result'), c.name + '：撤销态类名 dsh-enh-btn-result');
+    }
+  }
+});
+
+test('V42-38 r3 反例 S20·pop 身份判据: 文本巧合不得误弹链；链末确属本轮才 pop', async () => {
+  // ① S20：记忆开 X→O1 ⇒ 关记忆流（不清链，D-1 前提）⇒ 草稿改回逐字相同的 X ⇒ fresh 得 O2
+  //（backup=X，与链末 input 文本巧合）⇒ 点主键撤销：live(O2) 与链末 output(O1) 不对齐 ⇒ **不得 pop**
+  const h = loadHelpers({ memory: true, mode: 'standard' });
+  const sid = 'sess-v42-s20';
+  h.api.setActiveSession(sid);
+  const inputActions = { setDraft: () => {} };
+  const draftRef = { current: 'X' };
+  let n = 0;
+  h.hostStub.respond = () => ({ ok: true, text: 'O' + (++n) });
+  h.api.enhance(sid, 'X', inputActions, draftRef); // 记忆开：链 [X→O1]
+  await flush();
+  const s = h.api.storeFor(sid);
+  assert.deepEqual(s.memoryRounds, [{ input: 'X', output: 'O1' }], '前置：链 [X→O1]');
+  assert.equal(s.enhanced, 'O1');
+  h.configState.value.memory = false; // 关记忆流（不清链 —— D-1 的既有口径）
+  draftRef.current = 'X';
+  h.api.enhance(sid, 'X', inputActions, draftRef, undefined, true); // 从零重跑（记忆关 + 已改 ⇒ 主键「重新优化」）
+  await flush();
+  assert.equal(s.enhanced, 'O2', '前置：最近结果 O2（与链末 output O1 不同）');
+  assert.equal(s.backup, 'X', '前置：backup = X（与链末 input 文本巧合 —— S20 的触发条件）');
+  assert.deepEqual(s.memoryRounds, [{ input: 'X', output: 'O1' }], '记忆关轮次不入链 ⇒ 链仍是 [X→O1]');
+  s.phase = 'result';
+  const writes = [];
+  const b = loadButtonSpy(h, sid, { inputActions: { setDraft: (v) => writes.push(v) } });
+  const el = b.render('O2', 'plain'); // 结果写回草稿 ⇒ 未改（L = draftBodyOf(s.enhanced) = O2）
+  assert.equal(collectText(mainBtnOf(el)).join(''), 'result', '前置：主键 = 撤销优化');
+  assert.equal(auxGlyphOf(el), '⟳');
+  mainBtnOf(el).props.onClick();
+  assert.deepEqual(writes, ['X'], '① 回退值 = backup（X，与链末 input 同文本）');
+  assert.deepEqual(s.memoryRounds, [{ input: 'X', output: 'O1' }], '§1.1③-b：live(O2) 与链末 output(O1) 不对齐 ⇒ 不得误弹（旧 backup 文本相似性代理会弹）');
+  assert.equal(s.optimized, true, '① 不 pop ⇒ optimized 保持 true（链仍有效）');
+  assert.deepEqual(JSON.parse(h.lsBacking.get(MK(sid))), [{ input: 'X', output: 'O1' }], '① 不 pop ⇒ 持久化链键不变');
+  assert.equal(s.phase, 'idle');
+  // ② 对照格（backup=Y，文本不巧合）：同样不 pop —— 与 ① 行为一致 ⇒ 判据不再由文本巧合决定
+  const h2 = loadHelpers({ memory: true, mode: 'standard' });
+  const sid2 = 'sess-v42-s20-ctl';
+  const s2 = h2.api.storeFor(sid2);
+  s2.memoryRounds = [{ input: 'X', output: 'O1' }];
+  s2.enhanced = 'O2';
+  s2.backup = 'Y';
+  s2.phase = 'result';
+  s2.optimized = true;
+  h2.api.saveMemoryStore(sid2, s2.memoryRounds);
+  const w2 = [];
+  h2.api.undo(sid2, { setDraft: (v) => w2.push(v) });
+  assert.deepEqual(w2, ['Y'], '② 对照格：回退 backup Y');
+  assert.deepEqual(s2.memoryRounds, [{ input: 'X', output: 'O1' }], '② 对照格：同样不 pop');
+  assert.equal(s2.optimized, true);
+  assert.deepEqual(JSON.parse(h2.lsBacking.get(MK(sid2))), [{ input: 'X', output: 'O1' }], '② 对照格：持久化链键不变');
+  // ③ 防回归：链末确属本轮（live === 链末 output）⇒ 仍 pop + 空链删键
+  const h3 = loadHelpers({ memory: true, mode: 'standard' });
+  const sid3 = 'sess-v42-pop-normal';
+  const s3 = h3.api.storeFor(sid3);
+  s3.memoryRounds = [{ input: 'd', output: 'O' }];
+  s3.enhanced = 'O';
+  s3.backup = 'd';
+  s3.phase = 'result';
+  s3.optimized = true;
+  h3.api.saveMemoryStore(sid3, s3.memoryRounds);
+  const w3 = [];
+  h3.api.undo(sid3, { setDraft: (v) => w3.push(v) });
+  assert.deepEqual(w3, ['d'], '③ 正常记忆开 result：回退 backup');
+  assert.deepEqual(s3.memoryRounds, [], '③ live === 链末 output ⇒ 仍 pop（防回归：判据收紧不得吞掉正常弹链）');
+  assert.equal(s3.optimized, false, '③ 链空 ⇒ 回首次态');
+  assert.equal(h3.lsBacking.has(MK(sid3)), false, '③ pop 后空链即删键');
+  // ③b D-2 形态（两侧各剥一次前缀后对齐）：live='/deploy O' + 链末 output='O' ⇒ 仍 pop
+  const h4 = loadHelpers({ memory: true, mode: 'standard' });
+  const sid4 = 'sess-v42-pop-slash';
+  const s4 = h4.api.storeFor(sid4);
+  s4.memoryRounds = [{ input: 'd', output: 'O' }];
+  s4.enhanced = '/deploy O';
+  s4.backup = '/deploy d';
+  s4.phase = 'result';
+  s4.optimized = true;
+  h4.api.saveMemoryStore(sid4, s4.memoryRounds);
+  const w4 = [];
+  h4.api.undo(sid4, { setDraft: (v) => w4.push(v) });
+  assert.deepEqual(w4, ['/deploy d'], '③b 斜杠形态回退 backup（前缀保留）');
+  assert.deepEqual(s4.memoryRounds, [], '③b splitCommand 两侧对齐 ⇒ pop（D-2 形态兼容）');
+  assert.equal(h4.lsBacking.has(MK(sid4)), false, '③b pop 后删键');
+});
+
+test('V42-41 result 消费 effect: 用户编辑草稿 ⇒ 消费为 idle + 清结果键；草稿 === backup ⇒ 重新应用结果', () => {
+  // ① 草稿既 ≠ enhanced 也 ≠ backup ⇒ 消费结果态（此前该分支触达即 ReferenceError）
+  const h = loadHelpers({ memory: true, mode: 'standard' });
+  const sid = 'sess-v42-consume';
+  const s = h.api.storeFor(sid);
+  s.phase = 'result';
+  s.optimized = true;
+  s.backup = '原草稿';
+  s.enhanced = '旧结果';
+  s.memoryRounds = [{ input: '原草稿', output: '旧结果' }];
+  h.lsBacking.set(RK(sid), JSON.stringify({ b: '原草稿', e: '旧结果' }));
+  assert.ok(h.lsBacking.has(RK(sid)), '前置：结果持久化键在');
+  const b = loadButtonSpy(h, sid);
+  b.render('用户新写的内容', 'plain');
+  assert.equal(s.phase, 'idle', '结果态被消费为 idle（用户真实编辑 ≠ 回灌）');
+  assert.equal(s.enhanced, '');
+  assert.equal(s.error, null);
+  assert.equal(h.lsBacking.has(RK(sid)), false, '消费必须清结果持久化键');
+  assert.deepEqual(b.clearResultCalls, [sid], '必须调用 clearResultStore(sessionId)');
+  assert.deepEqual(s.memoryRounds, [{ input: '原草稿', output: '旧结果' }], '消费不动链');
+  assert.equal(s.optimized, true, '消费不动 optimized');
+  // ② 草稿 === backup（切走期间服务端回灌原始文本）⇒ 自动重新应用结果，不消费
+  const h2 = loadHelpers({ memory: true, mode: 'standard' });
+  const sid2 = 'sess-v42-reapply';
+  const s2 = h2.api.storeFor(sid2);
+  s2.phase = 'result';
+  s2.optimized = true;
+  s2.backup = '原草稿';
+  s2.enhanced = '旧结果';
+  h2.lsBacking.set(RK(sid2), JSON.stringify({ b: '原草稿', e: '旧结果' }));
+  const writes = [];
+  const b2 = loadButtonSpy(h2, sid2, { inputActions: { setDraft: (v) => writes.push(v) } });
+  b2.render('原草稿', 'plain');
+  assert.deepEqual(writes, ['旧结果'], '草稿 == backup ⇒ 自动重新应用结果');
+  assert.equal(s2.phase, 'result', '重灌分支不消费结果态');
+  assert.ok(h2.lsBacking.has(RK(sid2)), '重灌分支不清结果键');
+  assert.deepEqual(b2.clearResultCalls, [], '重灌分支不得调用 clearResultStore');
 });
 
 test('V1 澄清记录持久化: 刷新恢复 + 草稿清空/切模式清除 + undo 保留 + 失败保留', async () => {
@@ -1551,4 +2262,468 @@ test('V4/V7 wiring: btnRedo/titleRedo/cfgMemoryExpertLocked i18n ZH/EN 成对 + 
   assert.equal(/req\.continue\s*=/.test(btn), false, 'v4.4（V5）：client 不得再写 req.continue 赋值');
   const helpers = decodeChunk('src/client/helpers.js');
   assert.equal(/req\.continue\s*=/.test(helpers), false, 'v4.4（V5）：helpers 不得再写 req.continue 赋值（注释提及字段名合法）');
+});
+
+// ---------- v4.2（task-4·§3.1）：fresh（从零重新优化）语义 ----------
+// 第 6 参 fresh = true（按钮「重新优化」与副键 ⟳ 两个入口）：请求不带 memory / answers（host
+// baseRounds=[] → isContinuation 恒 false），全局已入库澄清记录既不携带也不清空，写链照常；
+// 本会话内新答只暂存 freshAnswers，终稿成功才并入全局并落盘。
+test('V42-20 fresh 载荷: 不带 memory / 不带 answers；全局 clarifyAnswers 不动不清；结果照常入链 + 非 fresh 复位 freshRun', async () => {
+  const h = loadHelpers({ memory: true, mode: 'standard' });
+  const sid = 'sess-v42-fresh-req';
+  h.api.setActiveSession(sid);
+  const inputActions = { setDraft: () => {} };
+  const draftRef = { current: '草稿F' };
+  const prior = [{ q: 'Q1', a: 'a', via: 'option' }];
+  h.lsBacking.set(CK(sid), JSON.stringify(prior)); // 已入库澄清记录（模拟跨轮已答）
+  const s = h.api.storeFor(sid);
+  assert.deepEqual(s.clarifyAnswers, prior, '前置：已入库澄清记录（刷新恢复）');
+  h.hostStub.respond = () => ({ ok: true, text: 'FRESH_OUT' });
+  h.api.enhance(sid, '草稿F', inputActions, draftRef, undefined, true);
+  const first = sentEnhances(h)[0];
+  assert.equal(first.args.memory, undefined, '§3.1-1：fresh 请求不得携带 memory（= 新开对话）');
+  assert.equal(first.args.answers, undefined, '§3.1-1：freshAnswers 为空 → 不得携带 answers（全局已答记录本次不携带）');
+  assert.equal(s.freshRun, true, '§3.1-1：fresh 置 freshRun=true');
+  assert.deepEqual(s.freshAnswers, [], '§3.1-1：本会话新答暂存区初始为空');
+  await flush();
+  assert.deepEqual(s.memoryRounds, [{ input: '草稿F', output: 'FRESH_OUT' }], '§3.1-4：fresh 结果照常入链（写链判定不含 fresh）');
+  assert.equal(s.optimized, true, '结果应用 → optimized=true');
+  assert.deepEqual(s.clarifyAnswers, prior, '§3.1-1：全局 clarifyAnswers 本次既不携带也不清空');
+  assert.equal(h.lsBacking.get(CK(sid)), JSON.stringify(prior), '§3.1-1：澄清持久化键原样保留');
+  assert.equal(s.freshRun, false, '§3.1-5：终稿成功 → freshRun 复位');
+  assert.deepEqual(s.freshAnswers, [], '§3.1-5：终稿成功 → freshAnswers 清空');
+  // 非 fresh（普通「继续优化」）：行为逐字不变（带链 + 带全局已答记录），并复位 freshRun
+  draftRef.current = '草稿F2';
+  h.api.enhance(sid, '草稿F2', inputActions, draftRef);
+  const second = sentEnhances(h)[1];
+  assert.ok(second.args.memory && Array.isArray(second.args.memory.rounds) && second.args.memory.rounds.length === 1,
+    '§3.1-2：非 fresh 逐字不变——仍携带记忆链');
+  assert.deepEqual(second.args.answers, prior, '§3.1-2：非 fresh 逐字不变——仍携带全局已入库澄清记录');
+  assert.equal(s.freshRun, false, '§3.1-2：非 fresh 轮次置 freshRun=false（退出 fresh 会话）');
+  await flush();
+});
+
+test('V42-21 fresh 澄清续跑: 沿袭 fresh（不带 memory、answers=freshAnswers 只暂存）；终稿并入全局并落盘 + 两字段复位', async () => {
+  const h = loadHelpers({ memory: true, mode: 'expert' });
+  const sid = 'sess-v42-fresh-clarify';
+  h.api.setActiveSession(sid);
+  const inputActions = { setDraft: () => {} };
+  const draftRef = { current: '草稿Q' };
+  const s = h.api.storeFor(sid);
+  let call = 0;
+  h.hostStub.respond = () => {
+    call += 1;
+    return call === 1 ? { ok: true, clarify: [{ q: 'Q1', options: ['a', 'b'] }], text: '' } : { ok: true, text: '终稿F' };
+  };
+  h.api.enhance(sid, '草稿Q', inputActions, draftRef, undefined, true);
+  await flush();
+  assert.equal(s.phase, 'clarify');
+  assert.equal(s.freshRun, true, '§3.1-7：澄清信号保留 freshRun（续跑仍 fresh）');
+  assert.deepEqual(s.freshAnswers, [], '§3.1-7：澄清信号保留暂存区（此处仍空）');
+  assert.equal(h.lsBacking.has(CK(sid)), false, '§3.1-1：fresh 会话新答不得落盘');
+  // 澄清续跑（ClarifyPanel 只传 5 参 → 靠 freshRun 沿袭）
+  h.api.enhance(sid, '草稿Q', inputActions, draftRef, { answers: [{ q: 'Q1', a: 'a', via: 'option' }] });
+  const second = sentEnhances(h)[1];
+  assert.equal(second.args.memory, undefined, '§3.1-3：fresh 会话内澄清续跑沿袭 fresh（不带 memory）');
+  assert.deepEqual(second.args.answers, [{ q: 'Q1', a: 'a', via: 'option' }], '§3.1-1/3：answers = freshAnswers（本轮新答先并入暂存区）');
+  assert.deepEqual(s.clarifyAnswers, [], '全局 clarifyAnswers 全程不被 fresh 会话写入');
+  assert.equal(h.lsBacking.has(CK(sid)), false, '§3.1-1：续跑仍不落盘（只暂存）');
+  assert.deepEqual(s.freshAnswers, [{ q: 'Q1', a: 'a', via: 'option' }], '§3.1-1：新答并入 freshAnswers');
+  await flush();
+  assert.equal(s.phase, 'result');
+  assert.deepEqual(s.memoryRounds, [{ input: '草稿Q', output: '终稿F' }], '§3.1-4：fresh 会话终稿照常入链');
+  assert.deepEqual(s.clarifyAnswers, [{ q: 'Q1', a: 'a', via: 'option' }], '§3.1-5：终稿成功把 freshAnswers 并入全局');
+  assert.equal(h.lsBacking.get(CK(sid)), JSON.stringify([{ q: 'Q1', a: 'a', via: 'option' }]), '§3.1-5：并入后必须 saveClarifyStore');
+  assert.equal(s.freshRun, false, '§3.1-5：freshRun 复位');
+  assert.deepEqual(s.freshAnswers, [], '§3.1-5：freshAnswers 清空');
+});
+
+test('V42-22 fresh 暂存封顶: 暂存区合计口径 9 条（保留最近）；终稿并入全局同口径', async () => {
+  const h = loadHelpers({ memory: true, mode: 'expert' });
+  const sid = 'sess-v42-fresh-cap';
+  h.api.setActiveSession(sid);
+  const inputActions = { setDraft: () => {} };
+  const draftRef = { current: '草稿9F' };
+  const s = h.api.storeFor(sid);
+  let call = 0;
+  h.hostStub.respond = () => {
+    call += 1;
+    if (call <= 4) {
+      return {
+        ok: true,
+        clarify: [
+          { q: 'Q' + call + 'a', options: ['1', '2'] },
+          { q: 'Q' + call + 'b', options: ['1', '2'] },
+          { q: 'Q' + call + 'c', options: ['1', '2'] },
+        ],
+        text: '',
+      };
+    }
+    return { ok: true, text: '终稿9F' };
+  };
+  h.api.enhance(sid, '草稿9F', inputActions, draftRef, undefined, true);
+  await flush();
+  for (let round = 1; round <= 3; round++) {
+    h.api.enhance(sid, '草稿9F', inputActions, draftRef, {
+      answers: [
+        { q: 'Q' + round + 'a', a: 'a' + round },
+        { q: 'Q' + round + 'b', a: 'b' + round },
+        { q: 'Q' + round + 'c', a: 'c' + round },
+      ],
+    });
+    await flush();
+  }
+  assert.equal(call, 4, '1 次首轮 + 3 次澄清续跑');
+  assert.equal(s.clarifyAnswers.length, 0, '全局记录全程为空（fresh 只暂存）');
+  assert.equal(h.lsBacking.has(CK(sid)), false, '§3.1-1：fresh 会话全程不落盘');
+  assert.equal(s.freshAnswers.length, 9, '§3.1-1：freshAnswers 合计口径封顶 9');
+  assert.deepEqual(s.freshAnswers[0], { q: 'Q1a', a: 'a1' }, '时序不乱（前轮在前）');
+  assert.deepEqual(s.freshAnswers[8], { q: 'Q3c', a: 'c3' });
+  // 第 4 轮提交（12 条）→ 终稿：并入全局同口径 slice(-9)，最早一轮让位
+  h.api.enhance(sid, '草稿9F', inputActions, draftRef, {
+    answers: [
+      { q: 'Q4a', a: 'a4' },
+      { q: 'Q4b', a: 'b4' },
+      { q: 'Q4c', a: 'c4' },
+    ],
+  });
+  await flush();
+  assert.equal(s.phase, 'result');
+  assert.equal(s.clarifyAnswers.length, 9, '§3.1-5：终稿并入全局同口径（slice(-9)）');
+  assert.deepEqual(s.clarifyAnswers[0], { q: 'Q2a', a: 'a2' }, '超限保留最近（最早一轮让位）');
+  assert.deepEqual(s.clarifyAnswers[8], { q: 'Q4c', a: 'c4' });
+  assert.equal(JSON.parse(h.lsBacking.get(CK(sid))).length, 9, '并入后落盘（saveClarifyStore）');
+  assert.equal(s.freshRun, false);
+  assert.deepEqual(s.freshAnswers, []);
+});
+
+test('V42-23 fresh 失败保留: 业务失败（TIMEOUT）与网络失败都不作废 fresh 会话（重试仍不带 memory）', async () => {
+  const h = loadHelpers({ memory: true, mode: 'expert' });
+  const sid = 'sess-v42-fresh-fail';
+  h.api.setActiveSession(sid);
+  const inputActions = { setDraft: () => {} };
+  const draftRef = { current: '草稿X' };
+  const s = h.api.storeFor(sid);
+  let call = 0;
+  h.hostStub.respond = () => {
+    call += 1;
+    if (call === 1) return { ok: true, clarify: [{ q: 'Q1', options: ['a', 'b'] }], text: '' };
+    return { ok: false, code: 'TIMEOUT' };
+  };
+  h.api.enhance(sid, '草稿X', inputActions, draftRef, undefined, true);
+  await flush();
+  assert.equal(s.phase, 'clarify');
+  h.api.enhance(sid, '草稿X', inputActions, draftRef, { answers: [{ q: 'Q1', a: 'a', via: 'option' }] });
+  await flush();
+  assert.equal(s.phase, 'idle');
+  assert.equal(s.error, 'TIMEOUT');
+  assert.equal(s.freshRun, true, '§3.1-6：失败保留 freshRun（重试仍 fresh）');
+  assert.deepEqual(s.freshAnswers, [{ q: 'Q1', a: 'a', via: 'option' }], '§3.1-6：失败保留 freshAnswers');
+  assert.deepEqual(s.clarifyAnswers, [], 'fresh 会话不写全局记录');
+  assert.equal(h.lsBacking.has(CK(sid)), false, 'fresh 会话不落盘');
+  // 网络失败（Promise 拒绝）：同样保留
+  h.hostStub.respond = () => Promise.reject(new Error('net down'));
+  h.api.enhance(sid, '草稿X', inputActions, draftRef, { answers: [{ q: 'Q2', a: 'b', via: 'option' }] });
+  const netCall = sentEnhances(h)[2];
+  assert.equal(netCall.args.memory, undefined, '§3.1-3/6：重试仍走 fresh（不带 memory）');
+  assert.deepEqual(netCall.args.answers, [{ q: 'Q1', a: 'a', via: 'option' }, { q: 'Q2', a: 'b', via: 'option' }],
+    '重试请求携带本会话已答（freshAnswers 累计）');
+  await flush();
+  assert.equal(s.error, 'NETWORK');
+  assert.equal(s.freshRun, true, '§3.1-6：网络失败保留 freshRun');
+  assert.deepEqual(s.freshAnswers, [{ q: 'Q1', a: 'a', via: 'option' }, { q: 'Q2', a: 'b', via: 'option' }], '网络失败保留 freshAnswers');
+  assert.deepEqual(s.clarifyAnswers, [], '全局记录仍为空');
+});
+
+test('V42-24 fresh 取消作废: cancelEnhance → freshRun/freshAnswers 复位（半截 fresh 会话不留残）', async () => {
+  const h = loadHelpers({ memory: true, mode: 'expert' });
+  const sid = 'sess-v42-fresh-cancel';
+  h.api.setActiveSession(sid);
+  const inputActions = { setDraft: () => {} };
+  const draftRef = { current: '草稿K' };
+  const s = h.api.storeFor(sid);
+  let call = 0;
+  h.hostStub.respond = () => {
+    call += 1;
+    if (call === 1) return { ok: true, clarify: [{ q: 'Q1', options: ['a', 'b'] }], text: '' };
+    return new Promise(() => {}); // 在途永不完成
+  };
+  h.api.enhance(sid, '草稿K', inputActions, draftRef, undefined, true);
+  await flush();
+  h.api.enhance(sid, '草稿K', inputActions, draftRef, { answers: [{ q: 'Q1', a: 'a', via: 'option' }] });
+  await flush();
+  assert.equal(s.phase, 'enhancing');
+  assert.equal(s.freshRun, true);
+  assert.deepEqual(s.freshAnswers, [{ q: 'Q1', a: 'a', via: 'option' }]);
+  h.api.cancelEnhance(sid, inputActions);
+  assert.equal(s.phase, 'idle');
+  assert.equal(s.freshRun, false, '§3.1-9：取消 → fresh 会话作废（freshRun 复位）');
+  assert.deepEqual(s.freshAnswers, [], '§3.1-9：取消清空暂存答案');
+  assert.deepEqual(s.clarifyAnswers, [], '全局记录不受影响（fresh 会话未写入）');
+  assert.ok(h.hostStub.calls.some((c) => c.method === 'cancel'), '取消必须发 cancel RPC（既有契约）');
+});
+
+test('V42-25 fresh 结果被丢弃作废: 增强中用户改草稿 → 不入链、fresh 两字段复位', async () => {
+  const h = loadHelpers({ memory: true, mode: 'expert' });
+  const sid = 'sess-v42-fresh-discard';
+  h.api.setActiveSession(sid);
+  const inputActions = { setDraft: () => {} };
+  const draftRef = { current: '草稿D' };
+  const s = h.api.storeFor(sid);
+  let call = 0;
+  let release = null;
+  h.hostStub.respond = () => {
+    call += 1;
+    if (call === 1) return { ok: true, clarify: [{ q: 'Q1', options: ['a', 'b'] }], text: '' };
+    return new Promise((resolve) => { release = resolve; });
+  };
+  h.api.enhance(sid, '草稿D', inputActions, draftRef, undefined, true);
+  await flush();
+  h.api.enhance(sid, '草稿D', inputActions, draftRef, { answers: [{ q: 'Q1', a: 'a', via: 'option' }] });
+  await flush();
+  assert.equal(s.phase, 'enhancing');
+  assert.equal(s.freshRun, true);
+  draftRef.current = '用户改过的草稿'; // 飞行期编辑 → 结果被丢弃
+  release({ ok: true, text: '迟到终稿' });
+  await flush();
+  assert.equal(s.phase, 'idle');
+  assert.equal(s.enhanced, '');
+  assert.deepEqual(s.memoryRounds, [], '丢弃不入链');
+  assert.equal(s.freshRun, false, '§3.1-8：结果被丢弃 → fresh 会话作废');
+  assert.deepEqual(s.freshAnswers, [], '§3.1-8：作废即清空暂存答案');
+  assert.deepEqual(s.clarifyAnswers, [], '全局记录不受影响');
+  assert.equal(h.lsBacking.has(CK(sid)), false);
+});
+
+test('V42-26 undo 清 fresh: 撤销后 freshRun/freshAnswers 复位（fresh 字段与结果态同寿命）', () => {
+  const h = loadHelpers({ memory: true, mode: 'standard' });
+  const sid = 'sess-v42-undo-fresh';
+  const s = h.api.storeFor(sid);
+  s.phase = 'idle';
+  s.optimized = true;
+  s.backup = 'b1';
+  s.enhanced = 'B1';
+  s.memoryRounds = [{ input: 'b1', output: 'B1' }];
+  s.freshRun = true;
+  s.freshAnswers = [{ q: 'Q1', a: 'a', via: 'option' }];
+  const writes = [];
+  h.api.undo(sid, { setDraft: (v) => writes.push(v) });
+  assert.deepEqual(writes, ['b1'], '撤销回退点 = backup（body === 末轮 input）');
+  assert.equal(s.freshRun, false, '§3.1-undo：撤销清 freshRun');
+  assert.deepEqual(s.freshAnswers, [], '§3.1-undo：撤销清 freshAnswers');
+  assert.equal(s.optimized, false, '链空 → 回首次态');
+});
+
+test('V42-27 clarifyCancel 作废 fresh: 取消清两字段 → 再 ⟳ 不带 answers、作废答案不得并入全局', async () => {
+  const h = loadHelpers({ memory: true, mode: 'expert' });
+  const sid = 'sess-v42-fresh-clcancel';
+  h.api.setActiveSession(sid);
+  const inputActions = { setDraft: () => {} };
+  const draftRef = { current: '草稿CC' };
+  const s = h.api.storeFor(sid);
+  let call = 0;
+  h.hostStub.respond = () => {
+    call += 1;
+    if (call <= 2) return { ok: true, clarify: [{ q: 'Q' + call, options: ['a', 'b'] }], text: '' };
+    return { ok: true, text: 'T' + call };
+  };
+  h.api.enhance(sid, '草稿CC', inputActions, draftRef, undefined, true);
+  await flush();
+  h.api.enhance(sid, '草稿CC', inputActions, draftRef, { answers: [{ q: 'Q1', a: 'a1', via: 'option' }] });
+  await flush();
+  assert.equal(s.phase, 'clarify');
+  assert.equal(s.freshRun, true);
+  assert.deepEqual(s.freshAnswers, [{ q: 'Q1', a: 'a1', via: 'option' }], '前置：fresh 会话已暂存新答');
+  assert.deepEqual(s.clarifyAnswers, [], '前置：尚未并入全局');
+  h.api.clarifyCancel(sid, inputActions);
+  assert.equal(s.phase, 'idle');
+  assert.equal(s.freshRun, false, '取消澄清 = 本次 fresh 会话作废（清 freshRun）');
+  assert.deepEqual(s.freshAnswers, [], '取消澄清清空暂存答案');
+  assert.equal(h.lsBacking.has(CK(sid)), false, '作废的暂存答案不得落盘');
+  // 作废后再走 fresh（副键 ⟳ 入口）：请求不得携带上一会话的暂存答案
+  h.api.enhance(sid, '草稿CC', inputActions, draftRef, undefined, true);
+  const again = sentEnhances(h)[2];
+  assert.equal(again.args.answers, undefined, '作废后再 ⟳：请求不带 answers');
+  assert.equal(again.args.memory, undefined, '作废后再 ⟳：请求不带 memory');
+  await flush();
+  assert.deepEqual(s.clarifyAnswers, [], '作废的暂存答案不得在终稿并入全局');
+});
+
+test('V42-28 非 fresh / 清链作废暂存: 非 fresh 轮次清 freshAnswers；切模式与草稿清空清两字段', async () => {
+  // ① 非 fresh 轮次不得把被放弃的 fresh 暂存答案并入全局（否则「从零」答案会污染普通轮次）
+  const h = loadHelpers({ memory: true, mode: 'standard' });
+  const sid = 'sess-v42-fresh-abandon';
+  h.api.setActiveSession(sid);
+  const inputActions = { setDraft: () => {} };
+  const draftRef = { current: '草稿A2' };
+  const s = h.api.storeFor(sid);
+  s.freshRun = true;
+  s.freshAnswers = [{ q: 'Q1', a: 'a1', via: 'option' }]; // 被放弃的 fresh 暂存
+  h.hostStub.respond = () => ({ ok: true, text: 'T9' });
+  h.api.enhance(sid, '草稿A2', inputActions, draftRef); // 非 fresh（无 clarifyOpts）
+  assert.equal(s.freshRun, false, '非 fresh 轮次置 freshRun=false');
+  assert.deepEqual(s.freshAnswers, [], '非 fresh 轮次必须清空被放弃的 fresh 暂存');
+  await flush();
+  assert.deepEqual(s.clarifyAnswers, [], '非 fresh 终稿不得并入被放弃的 fresh 暂存答案');
+  assert.equal(h.lsBacking.has(CK(sid)), false, '未并入即不落盘');
+
+  // ② 清链（切模式）：fresh 两字段复位
+  const h2 = loadHelpers({ memory: true, mode: 'standard' });
+  const sid2 = 'sess-v42-chain-mode';
+  const s2 = h2.api.storeFor(sid2);
+  s2.freshRun = true;
+  s2.freshAnswers = [{ q: 'Q7', a: 'a7', via: 'option' }];
+  h2.configState.value.mode = 'expert';
+  h2.fireConfig();
+  assert.equal(s2.freshRun, false, '切模式清链必须清 freshRun');
+  assert.deepEqual(s2.freshAnswers, [], '切模式清链必须清 freshAnswers');
+
+  // ③ 清链（草稿「非空 → 空」跳变 = 手动清空 / 发送成功）：fresh 两字段复位
+  const h3 = loadHelpers({ memory: true, mode: 'standard' });
+  const sid3 = 'sess-v42-chain-draft';
+  const s3 = h3.api.storeFor(sid3);
+  s3.memoryRounds = [{ input: 'x', output: 'X' }];
+  s3.optimized = true;
+  s3.freshRun = true;
+  s3.freshAnswers = [{ q: 'Q8', a: 'a8', via: 'option' }];
+  const btn = loadButton(h3, sid3);
+  btn.render('x', 'plain');
+  btn.render('', 'plain');
+  assert.equal(s3.freshRun, false, '草稿清空清链必须清 freshRun');
+  assert.deepEqual(s3.freshAnswers, [], '草稿清空清链必须清 freshAnswers');
+});
+
+// ---------- v4.2（task-4·§5.5/§5.6/§5.7）：host 零改动合同 / 箭头动画 / UI 接线 ----------
+// 媒体块提取（不用正则）：从 marker 起按花括号配对切片
+const mediaBlocksOf = (src, marker) => {
+  const out = [];
+  let from = 0;
+  for (;;) {
+    const start = src.indexOf(marker, from);
+    if (start === -1) break;
+    const open = src.indexOf('{', start);
+    if (open === -1) break;
+    let depth = 0;
+    let end = -1;
+    for (let k = open; k < src.length; k++) {
+      const ch = src.charAt(k);
+      if (ch === '{') depth += 1;
+      else if (ch === '}') { depth -= 1; if (depth === 0) { end = k; break; } }
+    }
+    if (end === -1) break;
+    out.push(src.slice(start, end + 1));
+    from = end + 1;
+  }
+  return out;
+};
+
+test('V42-30 host 零改动合同: isContinuation 双门（memoryActive + baseRounds.length>0）；无 rounds → 单条 user 消息（行为锚）', () => {
+  const host = decodeChunk('src/host/enhance-handlers.js');
+  // §二.1：请求不带 memory → baseRounds = [] → hasMemory = false → isContinuation 恒 false
+  assert.ok(host.includes('const baseRounds = args && args.memory && Array.isArray(args.memory.rounds)'), 'analyze：请求不带 memory → baseRounds=[]');
+  assert.ok(host.includes('const hasMemory = memRounds.length > 0;'), 'hasMemory 只看优化轮（D17）');
+  assert.ok(host.includes("const memoryActive = shouldInjectMemory(cfg.memory === true || cfg.mode === 'expert', hasMemory);"), 'memoryActive 判定单点');
+  assert.ok(host.includes('state.isContinuation = memoryActive && baseRounds.length > 0 && memDelta !== null'), '§二.1：isContinuation 必须双门——fresh 请求恒 false（不注入 CONTINUE_PROMPT / 本轮修改）');
+  assert.ok(host.includes('if (memoryActive && baseRounds.length > 0) {'), '§二.1：memDelta 只在有 rounds 时计算');
+  assert.ok(host.includes('const built = buildChatMessages(memRounds, finalText,'), '§二.2：assemble 记忆分支');
+  assert.ok(host.includes("messages = [{ id: 'enhance-' + sessionId + '-' + seq, role: 'user'"), '§二.2：无记忆分支 = 单条 user 消息');
+  assert.ok(host.includes('const clarifyAnswers = Array.isArray(args && args.answers)'), '§二.3：请求不带 answers → clarifyAnswers=[]');
+  assert.equal(host.includes('memoryRounds.push'), false, '§二.4：host 不持有链（入链是 client 侧行为）');
+  // 行为锚：与发布产物同源的纯函数（src/host/pure.js）
+  const pure = decodeChunk('src/host/pure.js');
+  const api = new Function(pure + ';return { buildChatMessages: buildChatMessages, shouldInjectMemory: shouldInjectMemory, wrapUserText: wrapUserText, buildClarifyMessage: buildClarifyMessage, computeEditDelta: computeEditDelta };')();
+  assert.equal(api.shouldInjectMemory(true, false), false, '开关开但无 rounds → 不注入（等价新开对话）');
+  const single = api.buildChatMessages([], '正文', 'enhance-x-1', 8000);
+  assert.equal(single.messages.length, 1, '无 rounds → 单条消息');
+  assert.equal(single.messages[0].role, 'user');
+  assert.equal(single.messages[0].content[0].text, '正文', '单条消息正文 = 本轮最终 user 文本');
+  assert.deepEqual(api.computeEditDelta('', '正文'), { added: [], removed: [] }, '无上一轮输出 → 差异为空 → isContinuation 必为 false');
+  assert.deepEqual(JSON.parse(api.wrapUserText('草稿', [], false).split('\n')[1]), { originalDraft: '草稿' },
+    '§二.3：请求不带 answers → 证据正文 JSON 无 clarifyAnswers 字段');
+  assert.equal(api.buildClarifyMessage([], 8000), '', '§二.3：无 answers → 不注入澄清参考消息');
+});
+
+test('V42-31 箭头动画: ▾ 触发器 caret span（aria-expanded 唯一状态源）+ 展开态 rotate(180deg) + chip 箭头 + reduced-motion 关闭', () => {
+  const menu = decodeChunk('src/client/components/enhance-menu.js');
+  assert.ok(menu.includes("'aria-expanded': open ? 'true' : 'false'"), '§3.3：aria-expanded 仍是动画唯一状态源（不得新增状态/类名切换）');
+  assert.equal(countOf(menu, 'dsh-enh-menu-caret'), 1, '§3.3：caret 类名恰 1 处（无类名切换、注释不含该类名）');
+  const trig = menu.indexOf("'aria-expanded': open ? 'true' : 'false'");
+  const caret = menu.indexOf("className: 'dsh-enh-menu-caret'");
+  assert.ok(trig !== -1 && caret > trig && caret - trig < 600, '§3.3：caret span 必须落在 ▾ 触发器元素构造内（紧邻 aria-expanded）');
+  const css = decodeChunk('src/client/styles.js');
+  assert.equal(countOf(css, '.dsh-enh-menu-caret{display:inline-block;transform-origin:center;transition:transform .18s ease}'), 1,
+    '§3.4：caret 基础规则必须逐字存在且唯一（transition:transform .18s ease）');
+  assert.equal(countOf(css, '.dsh-enh-menu-trigger[aria-expanded="true"] .dsh-enh-menu-caret{transform:rotate(180deg)}'), 1,
+    '§3.4：展开态 caret 旋转 180° 规则缺失或重复');
+  // chip select 箭头：基础规则补 transition（保留 translateY(-50%)）+ 两条展开态规则
+  const arrowAt = css.indexOf('.dsh-plg-mselect-arrow{position:absolute');
+  assert.ok(arrowAt !== -1, '§3.4：.dsh-plg-mselect-arrow 基础规则必须仍在（绝对定位形态）');
+  const arrowBody = css.slice(arrowAt, css.indexOf('}', arrowAt));
+  assert.ok(arrowBody.includes('transform:translateY(-50%)'), '§3.4：chip 箭头基础规则的 translateY(-50%) 不得丢失');
+  assert.ok(arrowBody.includes('transition:transform .18s ease'), '§3.4：chip 箭头基础规则必须补 transition:transform .18s ease');
+  assert.equal(countOf(css, '.dsh-plg-mselect-trigger[aria-expanded="true"] .dsh-plg-mselect-arrow{transform:translateY(-50%) rotate(180deg)}'), 1,
+    '§3.4：基础带 translateY(-50%) → 展开态必须显式带上（否则垂直居中丢失）');
+  assert.equal(countOf(css, '.dsh-plg-params-group .dsh-plg-mselect-trigger[aria-expanded="true"] .dsh-plg-mselect-arrow{transform:rotate(180deg)}'), 1,
+    '§3.4：params 作用域基础是 transform:none → 展开态只写 rotate（权重 0-4-0 压过 0-2-0）');
+  // reduced-motion：既有关闭块内关掉两条 transition（媒体块唯一）
+  const rm = mediaBlocksOf(css, '@media (prefers-reduced-motion: reduce)');
+  assert.equal(rm.length, 1, '降低动效偏好媒体块必须唯一（在既有块内扩展）');
+  assert.ok(rm[0].includes('.dsh-enh-spin{animation:none}'), '既有 spin 关闭不得回归删除');
+  assert.ok(rm[0].includes('dsh-enh-menu-caret{transition:none}'), '§3.4：reduced-motion 必须关掉 caret 的方向切换过渡');
+  assert.ok(rm[0].includes('dsh-plg-mselect-arrow{transition:none}'), '§3.4：reduced-motion 必须关掉 chip 箭头的方向切换过渡');
+  assert.equal(countOf(rm[0], 'transition:none'), 2, '两条 transition 关闭各一次（祖先作用域选择器压过同权重后出现的声明）');
+});
+
+test('V42-32 UI 接线: .dsh-enh-split=[aux, main, EnhanceMenu]；main 仍 button+mainRef；aux 字形/tabIndex；i18n 成对 + 空输入邻近契约', async () => {
+  const h = loadHelpers({ memory: true, mode: 'standard' });
+  const sid = 'sess-v42-wire';
+  h.api.setActiveSession(sid);
+  const inputActions = { setDraft: () => {} };
+  const draftRef = { current: '草稿W' };
+  h.hostStub.respond = () => ({ ok: true, text: 'OUTW' });
+  h.api.enhance(sid, '草稿W', inputActions, draftRef);
+  await flush();
+  const b = loadButtonSpy(h, sid);
+  const el = b.render('OUTW', 'plain');
+  const split = splitOf(el);
+  assert.ok(split, '缺 .dsh-enh-split 组合体');
+  const kids = split.children.filter((x) => x !== null && x !== undefined);
+  assert.equal(kids.length, 3, '§3.2：split 子元素恒为 [aux, main, EnhanceMenu] 三槽');
+  assert.ok(hasClass(kids[0], 'dsh-enh-aux'), '§3.2：首位必须是副键');
+  assert.equal(kids[1], mainBtnOf(el), '§3.2：次位必须是主键');
+  assert.equal(typeof kids[2].props.onOpenChange, 'function', '§3.2：末位必须是 EnhanceMenu（受控开合不变）');
+  assert.equal(kids[2].props.anchorRef, mainBtnOf(el).props.ref, '菜单锚点 = 主键 ref（既有契约）');
+  const main = mainBtnOf(el);
+  assert.equal(main.type, 'button');
+  assert.equal(main.props['aria-label'], 'enhanceButton');
+  assert.ok(main.props.ref && typeof main.props.ref === 'object' && 'current' in main.props.ref, '§3.2：main 必须保留 ref: mainRef');
+  const aux = auxBtnOf(el);
+  assert.equal(aux.type, 'button');
+  assert.equal(aux.props.tabIndex, -1, '§3.2：副键 tabIndex:-1（不参与 Tab 序列）');
+  assert.equal(aux.props.title, 'auxRedo');
+  assert.equal(aux.props['aria-label'], 'auxRedo', '§3.2：副键语义由 title/aria-label 承担');
+  const icon = classEl(aux, 'dsh-enh-aux-icon');
+  assert.ok(icon && textOf(icon) === '⟳', '§3.2/§3.4：字形在 span.dsh-enh-aux-icon（未改态 ⟳）');
+  // 源码锚（防「注释有、代码无」）+ 空输入邻近契约 + ✨ 饱和度判定
+  const btn = decodeChunk('src/client/components/enhance-button.js');
+  assert.ok(btn.includes("className: 'dsh-enh-aux'") && btn.includes("className: 'dsh-enh-aux-icon'"), '按钮 chunk 缺副键/字形类名接线');
+  assert.ok(btn.includes('dsh-enh-split'), '组合体容器接线缺失');
+  assert.ok(windowHas(btn, 'if (empty) {', 'setMenuOpen((v) => !v)', 500), 'v4.2 不得破坏空输入邻近契约（≤500 字符内 setMenuOpen 函数式切换）');
+  assert.equal(countOf(btn, "configState.value.memory === true || configState.value.mode === 'expert' ? '' : ' dsh-enh-icon-dim'"), 1,
+    '§3.2：✨ 饱和度判定逐字不变且唯一');
+  // i18n：auxRedo/auxUndo 成对 + titleRedo 新文案 + btnRedo/btnContinue 不变 + ZH/EN 键集合相等
+  const i18n = decodeChunk('src/client/i18n.js');
+  for (const k of ['auxRedo', 'auxUndo', 'titleRedo']) {
+    assert.equal(countOf(i18n, k + ':'), 2, k + ' 必须 ZH/EN 成对');
+  }
+  assert.ok(i18n.includes("auxRedo: '从零重新优化：本次不带记忆上下文（类似新开对话）'")
+    && i18n.includes("auxRedo: 'Re-optimize from scratch (no memory context this run)'"), '§3.5：auxRedo 文案不符（ZH/EN）');
+  assert.ok(i18n.includes("auxUndo: '撤销优化：恢复本轮优化前的草稿'")
+    && i18n.includes("auxUndo: 'Undo: restore the draft from before this optimization'"), '§3.5：auxUndo 文案不符（ZH/EN）');
+  assert.ok(i18n.includes("titleRedo: '重新优化：从零重跑（本次不带记忆上下文）'")
+    && i18n.includes("titleRedo: 'Re-optimize from scratch (this run carries no memory context)'"), '§3.5：titleRedo 文案未改写（ZH/EN）');
+  assert.ok(i18n.includes("btnRedo: '重新优化'") && i18n.includes("btnRedo: 'Re-optimize'"), '§3.5：btnRedo 文案不变');
+  assert.ok(i18n.includes("btnContinue: '继续优化'") && i18n.includes("btnContinue: 'Continue'"), '§3.5：btnContinue 文案不变');
+  const tables = new Function(i18n + ';return { ZH: ZH, EN: EN };')();
+  assert.deepEqual(Object.keys(tables.ZH).sort(), Object.keys(tables.EN).sort(), '§3.5：ZH/EN 键集合必须完全相等');
 });

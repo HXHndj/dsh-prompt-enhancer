@@ -1,7 +1,8 @@
 # Changelog
 
 [3.3.3]: https://github.com/Fishsb/dsh-prompt-enhancer/compare/v3.3.2...v3.3.3
-[Unreleased]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v4.1.1...HEAD
+[Unreleased]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v4.2.0...HEAD
+[4.2.0]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v4.1.1...v4.2.0
 [4.1.1]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v4.1.0...v4.1.1
 [4.1.0]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v4.0.1...v4.1.0
 [4.0.1]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v4.0.0...v4.0.1
@@ -25,6 +26,21 @@
 > 🗺️ 条目内的 `flow:` 标注为功能链路标签（原 pmg 项目地图 `docs/map/` 已随 pmg 于 2026-09-10 移除，该路径不再存在）；agent 开工前先读 [`AGENTS.md`](AGENTS.md)。
 
 ## [Unreleased]
+
+## [4.2.0] - 2026-09-27
+
+双键按钮状态机（从零重新优化 + 撤销放开）+ 小三角箭头方向切换动画。决策与接口契约：`docs/plan-v4.2-decisions.md`（含独立验证反例 D-1/D-2/S20 的裁定与 r2/r3 修订）；**纯客户端改动**，RPC 面 24 条不变、配置 schema 与记忆链结构零改动。
+
+### Added
+
+- **按钮双键状态机：主键四态 + 左侧副键（⟳ 从零重新优化 / ↺ 撤销优化）** `flow:enhance-ui`：主键 = 首次「✨+模式标签」/ 优化成功且草稿未改「**撤销优化**」/ 改动草稿且记忆流开（含专家档）「**继续优化**」/ 改动草稿且记忆流关（轻量·标准）「**重新优化**」；副键仅在已优化态渲染（`optimized && phase ∈ {result, idle}`），字形 `⟳` = **从零重新优化**（`enhance()` 新增第 6 参 `fresh`：请求**不带** `memory`/`answers`、模型只看到当前草稿从零读一遍，**结果照常入链**——否则下一轮「继续优化」的 diff 基准会停在更旧一轮并注入假 diff）、「↺」= 撤销。**撤销放开**：前置由「仅 result 态」放宽为 `result || (idle && optimized)`，支持连环回退（每步回退到该轮起点，链非空即 `optimized` 保持 true，撤到链空回首次态），回退点按「本轮身份」判定（刷新兜底取链末 `input`，斜杠前缀在此边缘丢失，已文档化）。store 新增 `freshRun`/`freshAnswers`（**不持久化**，终稿时并入 `clarifyAnswers`；`clarifyCancel`/`cancelEnhance`/结果被丢弃/清链三触发/非 fresh 发起均作废，防跨段污染）。i18n 补 `auxRedo`/`auxUndo` 并改写 `titleRedo` 为从零语义（ZH/EN 各 216 键，成对）。**已实测**：全量 `npm test` **270/270/0**；门禁 `npm run gate` **通过 30 · 冲突 0**；`build-host --check`/`build-client --check` 双 OK（版本注入 4.2.0）；**隔离实例实机**主键四态 + 副键字形逐态读数（未改 = 撤销优化 + ⟳ / 已改·记忆开 = 继续优化 + ↺ / 已改·记忆关 = 重新优化 + ↺），副键 ↺ **端到端撤销实测**（草稿 `优化结果文本 补充一点` → `原始草稿`，主键回「✨标准」、副键隐藏）；单测侧 undo 七格矩阵（result 记忆开/关、idle 已改、三轮连环、刷新兜底、混合态、空链空 backup）逐格断言草稿写入值 + 链变化 + `optimized` + 持久化键。
+- **小三角箭头方向切换动画（展开态翻转 + 过渡）** `flow:enhance-ui`：输入框右侧 ▾ 触发器的字形包进 `.dsh-enh-menu-caret`，展开设置面板时 `rotate(180deg)`（▾ → ▴）、收起翻回，`transition:transform .18s ease`；设置页 chip select 箭头同源同动画（`.dsh-plg-mselect-trigger[aria-expanded="true"]` 及其 `.dsh-plg-params-group` 变体，权重 0-3-0 / 0-4-0 压过基础规则的 0-1-0 / 0-2-0）。**状态源 = 控件上既有的 `aria-expanded`**（零新增状态、零新增类名切换）；`prefers-reduced-motion: reduce` 时关闭过渡（方向仍切换）。**已实测**：隔离实例采样到**中间帧**（45/90/140ms 三个旋转矩阵 `0.0997…` → `-0.735…` → `-0.991…` → `matrix(-1,0,0,-1,0,0)`）证明是平滑过渡而非跳变，收起后回到 `none`（headless 无帧时 transition 停在 t=0 属截图环境假象：强制出帧后实测归零）；设置页 chip 展开实测 `rotate(180deg)` 且配置列表可见，收起归零；测试侧锁死四条选择器与 reduced-motion 实发形态。
+
+### Fixed
+
+- **记忆流开关切换后「双 undo」窗口 + 撤销回退到更旧一轮** `flow:enhance-ui`：记忆流开关切换**不**清链，故链尾可能早于最近一次结果；原判定「链尾优先」+ 主键用 `phase === 'result'`、副键用 `isUntouched` ⇒ 出现「主=撤销、副=撤销」且 ⟳ 入口消失，撤销还会把草稿回退到上一段更旧的草稿。现改为**最近结果优先**（`L = draftBodyOf(s.enhanced)` 非空时优先，记忆流开时每轮都入链、二者恒等价 ⇒ 与 host `isContinuation` 同基准的性质不受影响），主/副键判据统一为 `isUndoState = phase === 'result' || isUntouched`（析取项为**承重结构**：刷新首屏草稿未回灌 / 编辑中一帧 / 服务端回灌等 result 态且 D≠L 三格靠它保住「可点的撤销优化」，删掉即退化为 disabled 的「继续优化」）。**已实测**：独立验证者 probe 复现 → 修复后主键「撤销优化」+ 副键 `⟳`、撤销写入**本轮起点 B**（不是更旧的 A）、链**不** pop、刷新后一致；变异 m8（删析取项）与 m9（L 回退链优先）分别被 V42-37 / V42-34·35 点名。
+- **「未改」判定基准不对称 + 撤销 pop 身份误判** `flow:enhance-ui`：① 模型输出本身以 `/命令 ` 开头时，链存原始 output（未剥前缀）而草稿侧恒剥 ⇒ 结果刚落就被判「已改」、⟳ 入口消失；现两侧同基准。② pop 原用「`backup` 正文 === 链末 `input``」当身份代理 ⇒ 草稿文本恰好与旧轮相同时会**误弹掉一段仍有效的记忆链并删持久化键**；现改为「live 与链末轮 output 对齐（两侧都剥前缀 + 精确相等快路）」。**已实测**：D-2 形态（`/deploy ` 开头）修复后判「未改」（主=撤销 + 副=⟳）；S20 巧合格链保持 `[X→O1]`、链键不变、`optimized` 保持 true，对照组（backup=Y）行为一致，正常记忆开 result 格仍照常 pop；变异 mpop 被 V42-38 点名。
+- **「重新优化」静默携带上一段会话遗留的澄清问答** `flow:enhance-ui`：从零入口少传第 6 参时会带上全局旧 `answers`；补**请求载荷级**断言（`memory:false` + 预置澄清记录 + 已改 ⇒ `sent.answers === undefined`），变异 m4 现被 5 条用例点名。
 
 ## [4.1.1] - 2026-09-27
 
