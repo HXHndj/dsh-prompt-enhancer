@@ -25,7 +25,7 @@ const pureFn = new Function(defaultsBlock + '\n' + pureText + `
   ;return { wrapUserText, cleanOutput, friendlyMessage, validateConfig, resolveTemplateSystem, collectStream, buildTryChain,
     pickReachableIndex, probeCacheGet, probeCacheSet, WATCHDOG_TIMEOUT_MS, PROBE_TIMEOUT_MS, PROBE_CACHE_TTL_MS,
     extractModelRouteFromEvents, accumulateProjectionStats, summarizeModelStats, estimateBaseModeSeconds, estimateLiteModeSeconds,
-    parseClarify,
+    parseClarify, looksLikeClarifySignal, buildClarifyMessage,
     parseMode, parseMemory, shouldInjectMemory, parseBudgetChars,
     buildMemoryChainBlock, computeEditDelta, buildMemoryDeltaHint, buildChatMessages,
     MEMORY_ROUNDS_MAX, MEMORY_DELTA_MAX,
@@ -56,6 +56,8 @@ const {
   estimateBaseModeSeconds,
   estimateLiteModeSeconds,
   parseClarify,
+  looksLikeClarifySignal,
+  buildClarifyMessage,
   parseMode,
   parseMemory,
   shouldInjectMemory,
@@ -111,6 +113,20 @@ test('wrapUserText 证据正文包裹（v4.0.0：防注入声明 + JSON 载荷�
   // 澄清答复并入载荷（[{q,a}]）
   const p2 = JSON.parse(wrapUserText('hi', [{ q: '「它」指哪个函数？', a: 'parseConfig' }]).slice(DECL.length + 1));
   assert.deepEqual(p2.clarifyAnswers, [{ q: '「它」指哪个函数？', a: 'parseConfig' }]);
+  // v4.1（spec §1）：via（option=用户点选选项 / custom=用户自由输入）随条目透传；非法 via 整字段省略
+  const pVia = JSON.parse(wrapUserText('hi', [
+    { q: 'q1', a: 'a1', via: 'option' },
+    { q: 'q2', a: 'a2', via: 'custom' },
+    { q: 'q3', a: 'a3', via: 'bogus' },
+  ]).slice(DECL.length + 1));
+  assert.deepEqual(pVia.clarifyAnswers, [
+    { q: 'q1', a: 'a1', via: 'option' },
+    { q: 'q2', a: 'a2', via: 'custom' },
+    { q: 'q3', a: 'a3' },
+  ], 'via 透传：option/custom 保留，非法值整字段省略');
+  // v4.3（spec §2）：via=keep（用户选「保留原句」，a 为空串）透传——a 空串不得导致字段丢失
+  const pKeep = JSON.parse(wrapUserText('hi', [{ q: '用哪个框架？', a: '', via: 'keep' }]).slice(DECL.length + 1));
+  assert.deepEqual(pKeep.clarifyAnswers, [{ q: '用哪个框架？', a: '', via: 'keep' }], 'keep 条目（a=""）写入证据正文');
   // skip 标记
   const p3 = JSON.parse(wrapUserText('hi', [], true).slice(DECL.length + 1));
   assert.equal(p3.skipped, true);
@@ -277,11 +293,11 @@ test('buildTryChain 链为空 → 空链（2026-08-18 删内置兜底链，不�
 
 // ================= v2.0.0（V2 上下文感知）单测 =================
 
-test('U1 validateConfig mode/context 解析（v4.0.0 三档）', () => {
-  // 缺省 → standard + 全局预算默认 4000 + 记忆流默认开
+test('U1 validateConfig mode/context 解析（v4.1 三档 + 预算 8000/16000/32000）', () => {
+  // 缺省 → standard + 全局预算默认 8000 + 记忆流默认开
   const d = validateConfig({});
   assert.equal(d.mode, 'standard');
-  assert.equal(d.context.budgetChars, 4000);
+  assert.equal(d.context.budgetChars, 8000);
   assert.equal(d.memory, true);
   // 旧 engine v2 + basic → standard；smart（检索档已删）→ expert（盘点/澄清承接）
   const v2 = validateConfig({ engine: 'v2', context: { mode: 'basic', budgetChars: 8000 } });
@@ -294,13 +310,16 @@ test('U1 validateConfig mode/context 解析（v4.0.0 三档）', () => {
   assert.equal(validateConfig({ mode: 'publish' }).mode, 'standard');
   const bad = validateConfig({ engine: 'v3', context: { mode: 'turbo', budgetChars: 999 } });
   assert.equal(bad.mode, 'standard');
-  assert.equal(bad.context.budgetChars, 4000);
-  // 预算全局三档：8000/16000 合法；旧值 0/2000/32000 白名单外 → 回退 4000（迁移由 client 侧做）
+  assert.equal(bad.context.budgetChars, 8000);
+  // v4.1（spec §1）预算全局三档：8000（默认）/16000/32000 合法；旧值 0/2000/4000 与白名单外 → 8000。
+  // ★ 32000 现为合法档位——v4.0.0 的「32000→16000」降级必须已删除。
   assert.equal(validateConfig({ context: { budgetChars: 8000 } }).context.budgetChars, 8000);
   assert.equal(validateConfig({ context: { budgetChars: 16000 } }).context.budgetChars, 16000);
-  assert.equal(validateConfig({ context: { budgetChars: 0 } }).context.budgetChars, 4000, '预算恒 >0（0 档已删，静默失效陷阱根除）');
-  assert.equal(validateConfig({ context: { budgetChars: 2000 } }).context.budgetChars, 4000);
-  assert.equal(validateConfig({ context: { budgetChars: 32000 } }).context.budgetChars, 4000);
+  assert.equal(validateConfig({ context: { budgetChars: 32000 } }).context.budgetChars, 32000, '32000 不再降级为 16000');
+  assert.equal(validateConfig({ context: { budgetChars: 0 } }).context.budgetChars, 8000, '预算恒 >0（0 档已删，静默失效陷阱根除）');
+  assert.equal(validateConfig({ context: { budgetChars: 2000 } }).context.budgetChars, 8000, '旧 2000 → 8000');
+  assert.equal(validateConfig({ context: { budgetChars: 4000 } }).context.budgetChars, 8000, '旧 4000 → 8000');
+  assert.equal(validateConfig({ context: { budgetChars: 16001 } }).context.budgetChars, 8000, '白名单外值 → 8000');
 });
 
 test('U19 MODE_TABLE 三档 + 全局预算三档 + 档位默认参数（v4.0.0）', () => {
@@ -322,16 +341,18 @@ test('U19 MODE_TABLE 三档 + 全局预算三档 + 档位默认参数（v4.0.0�
   assert.equal(parseMode(undefined, 'v1', 'smart'), 'standard');
   assert.equal(parseMode(undefined, undefined, undefined), 'standard');
   assert.equal(parseMode('turbo', undefined, undefined), 'standard');
-  // v4.0.0 预算新语义：全局三档单选（语义 = 记忆链总预算），非法/越界/缺省 → 4000
-  assert.deepEqual(BUDGET_OPTIONS, [4000, 8000, 16000]);
-  assert.equal(parseBudgetChars(4000), 4000);
-  assert.equal(parseBudgetChars(8000), 8000);
+  // v4.1（spec §1）预算新语义：全局三档单选 8000（默认）/16000/32000（语义 = 记忆链总预算），
+  // 非法/越界/缺省/旧值（0/2000/4000）→ 8000；★ 32000 合法（不再降级 16000）
+  assert.deepEqual(BUDGET_OPTIONS, [8000, 16000, 32000]);
+  assert.equal(parseBudgetChars(8000), 8000, '默认档');
   assert.equal(parseBudgetChars(16000), 16000);
-  assert.equal(parseBudgetChars(0), 4000, '0 档已删（预算恒 >0）');
-  assert.equal(parseBudgetChars(2000), 4000);
-  assert.equal(parseBudgetChars(32000), 4000);
-  assert.equal(parseBudgetChars(undefined), 4000);
-  assert.equal(parseBudgetChars(999), 4000);
+  assert.equal(parseBudgetChars(32000), 32000, '32000 合法（v4.0.0 降级映射已删）');
+  assert.equal(parseBudgetChars(0), 8000, '0 档已删（预算恒 >0）');
+  assert.equal(parseBudgetChars(2000), 8000);
+  assert.equal(parseBudgetChars(4000), 8000, '旧 4000 → 8000');
+  assert.equal(parseBudgetChars(undefined), 8000);
+  assert.equal(parseBudgetChars(999), 8000);
+  assert.equal(parseBudgetChars('16000'), 8000, '字符串非白名单 → 8000');
   // v4.0.0：validateConfig 按档默认 params（二.3：超时 30/30/60s、Token 2000/2000/4000、输出 8000/8000/16000）
   assert.equal(validateConfig({ mode: 'lite' }).timeoutMs, 30000, 'lite 默认超时 30s');
   assert.equal(validateConfig({ mode: 'lite' }).maxTokens, 2000, 'lite 默认 Token 2000');
@@ -350,45 +371,47 @@ test('U19 MODE_TABLE 三档 + 全局预算三档 + 档位默认参数（v4.0.0�
   assert.equal(exp.outputLimit, 0);
 });
 
-test('U21 buildMemoryChainBlock 记忆链预算分配与防回显（v4.0.0 封顶=预算档位）', () => {
+test('U21 buildMemoryChainBlock 记忆链预算分配与防回显（v4.1：遗留死代码，语义不变）', () => {
   // 单轮：模板含两段 + 禁止回显 + 轮次编号
-  const b = buildMemoryChainBlock([{ input: '原文内容', output: '优化输出' }], 4000);
+  const b = buildMemoryChainBlock([{ input: '原文内容', output: '优化输出' }], 8000);
   assert.ok(b.includes('原文内容') && b.includes('优化输出'));
   assert.ok(b.includes('禁止回显'));
   assert.ok(b.includes('第1轮'));
-  // 预算等分：rounds=1 → 输入 1/3、输出 2/3（总预算 = 预算档位本身，原 2400 封顶放开）
-  const longInput = 'x'.repeat(2000);
-  const longOutput = 'y'.repeat(3000);
-  const bl = buildMemoryChainBlock([{ input: longInput, output: longOutput }], 4000);
-  assert.ok(bl.includes('x'.repeat(1333)), '单轮输入保留 1333（4000/3）');
-  assert.equal(bl.includes('x'.repeat(1334)), false);
-  assert.ok(bl.includes('y'.repeat(2667)), '单轮输出保留 2667（4000*2/3）');
-  assert.equal(bl.includes('y'.repeat(2668)), false);
-  // 档位区分度：16000 档注入上限显著高于 4000 档（放开封顶的意义）
+  // 预算等分：rounds=1 → 输入 1/3、输出 2/3（总预算 = 预算档位本身 8000）
+  const longInput = 'x'.repeat(9000);
+  const longOutput = 'y'.repeat(9000);
+  const bl = buildMemoryChainBlock([{ input: longInput, output: longOutput }], 8000);
+  assert.ok(bl.includes('x'.repeat(2666)), '单轮输入保留 2666（floor(8000/3)）');
+  assert.equal(bl.includes('x'.repeat(2667)), false);
+  assert.ok(bl.includes('y'.repeat(5334)), '单轮输出保留 5334（8000 - 2666）');
+  assert.equal(bl.includes('y'.repeat(5335)), false);
+  // 档位区分度：16000 档注入上限显著高于 8000 档（放开封顶的意义）
   const b16 = buildMemoryChainBlock([{ input: 'x'.repeat(20000), output: 'y'.repeat(20000) }], 16000);
   assert.ok(b16.includes('x'.repeat(5333)), '16000 档单轮输入保留 5333（16000/3）');
-  assert.ok(b16.includes('y'.repeat(10667)), '16000 档单轮输出保留 10667（16000*2/3）');
+  assert.ok(b16.includes('y'.repeat(10667)), '16000 档单轮输出保留 10667（16000 - 5333）');
   // 多轮编号：时间序 第1轮 → 第2轮，内容完整
   const multi = buildMemoryChainBlock([
     { input: 'a1', output: 'o1' },
     { input: 'a2', output: 'o2' },
-  ], 4000);
+  ], 8000);
   assert.ok(multi.indexOf('第1轮') < multi.indexOf('第2轮'));
   assert.ok(multi.includes('a1') && multi.includes('o2'));
-  // 轮数上限：>4 只保留最近 4 轮
+  // 轮数上限（v4.1 D4：MEMORY_ROUNDS_MAX = 3）：>3 只保留最近 3 轮
+  assert.equal(MEMORY_ROUNDS_MAX, 3, 'v4.1（D4）：记忆链最多往前三轮');
   const five = [];
   for (let i = 1; i <= 5; i++) five.push({ input: 'in' + i, output: 'out' + i });
-  const capped = buildMemoryChainBlock(five, 4000);
+  const capped = buildMemoryChainBlock(five, 8000);
   assert.equal(capped.includes('in1'), false, '最旧轮应被丢弃');
-  assert.ok(capped.includes('in5'), '最新轮保留');
+  assert.equal(capped.includes('in2'), false, '次旧轮应被丢弃');
+  assert.ok(capped.includes('in3') && capped.includes('in5'), '最近三轮保留');
   assert.equal((capped.match(/第\d轮/g) || []).length, MEMORY_ROUNDS_MAX);
   // 预算 0 / undefined → 空（等价不注入）
   assert.equal(buildMemoryChainBlock([{ input: 'a', output: 'b' }], 0), '');
   assert.equal(buildMemoryChainBlock([{ input: 'a', output: 'b' }], undefined), '');
   // 空链/缺省输入容错
-  assert.equal(buildMemoryChainBlock([], 4000), '');
-  assert.equal(buildMemoryChainBlock(null, 4000), '');
-  assert.equal(buildMemoryChainBlock([{ input: '', output: '' }], 4000), '');
+  assert.equal(buildMemoryChainBlock([], 8000), '');
+  assert.equal(buildMemoryChainBlock(null, 8000), '');
+  assert.equal(buildMemoryChainBlock([{ input: '', output: '' }], 8000), '');
 });
 
 test('U22 validateConfig mode/记忆开关解析（v4.0.0 三值语义·默认开）', () => {
@@ -396,10 +419,19 @@ test('U22 validateConfig mode/记忆开关解析（v4.0.0 三值语义·默认�
   assert.equal(c.mode, 'expert');
   assert.equal(c.context.budgetChars, 8000);
   assert.equal(c.memory, false, '显式 false 保持 false（老用户显式关闭不被翻转）');
-  // 旧配置迁移 A7：mode='memory' → mode='lite' + memory=true
+  // 旧配置迁移 A7：mode='memory' → mode='lite' + memory=true（旧预算 4000 → 8000）
   const mem = validateConfig({ mode: 'memory', context: { budgetChars: 4000 } });
   assert.equal(mem.mode, 'lite');
   assert.equal(mem.memory, true);
+  assert.equal(mem.context.budgetChars, 8000, 'v4.1（spec §1）：旧 4000 → 8000');
+  // v4.1（spec §1）预算迁移矩阵：旧 0/2000/4000/非法 → 8000；8000/16000/32000 原样；★ 32000 不降级
+  assert.equal(validateConfig({ context: { budgetChars: 0 } }).context.budgetChars, 8000);
+  assert.equal(validateConfig({ context: { budgetChars: 2000 } }).context.budgetChars, 8000);
+  assert.equal(validateConfig({ context: { budgetChars: 4000 } }).context.budgetChars, 8000);
+  assert.equal(validateConfig({ context: { budgetChars: 'x' } }).context.budgetChars, 8000);
+  assert.equal(validateConfig({ context: { budgetChars: 8000 } }).context.budgetChars, 8000);
+  assert.equal(validateConfig({ context: { budgetChars: 16000 } }).context.budgetChars, 16000);
+  assert.equal(validateConfig({ context: { budgetChars: 32000 } }).context.budgetChars, 32000, '★ 32000 不得再降级为 16000');
   // client 显式 memory 字段（config.memory）最高优先
   const memField = validateConfig({ mode: 'lite', memory: true });
   assert.equal(memField.mode, 'lite');
@@ -500,43 +532,154 @@ test('U47 buildMemoryDeltaHint 修改摘要格式化（v2.6.1）', () => {
   assert.ok(huge.length <= MEMORY_DELTA_MAX);
 });
 
-test('U48 buildChatMessages 记忆链真多轮消息（v4.0.0 封顶=预算档位）', () => {
-  // 无记忆链 → 仅最终 user 消息（与旧单消息一致）
-  const single = buildChatMessages([], '请优化：abc', 'id', 4000);
+// v4.1（spec §3.1–3.4）buildChatMessages 新口径：草稿永不截断 / 历史预算 = 预算 - 草稿 /
+// perRoundCap = floor(historyBudget/3) / 每轮各半 / 最近优先整轮丢弃 / 按行边界截断。
+test('U48 buildChatMessages 记忆链真多轮消息（v4.1 新分配口径）', () => {
+  const L = (ch, n) => ch.repeat(n);
+  const round = (input, output) => ({ input, output });
+  const mk = (a, b) => a + '\n' + b; // 首行 + 次行（次行放不下时验证行边界）
+  // ① 无记忆链 → 仅最终 user 消息（与旧单消息一致）
+  const single = buildChatMessages([], '请优化：abc', 'id', 8000);
   assert.equal(single.messages.length, 1);
   assert.equal(single.messages[0].role, 'user');
   assert.equal(single.messages[0].content[0].text, '请优化：abc');
   assert.equal(single.memChars, 0);
-  // 两轮 → user/assistant 交替 + 最终 user；时间序
+  // ② 当前草稿永不截断（spec §3.1）：草稿 9000 > 预算 8000 → 历史预算 0，历史整轮丢弃，草稿全文保留
+  const longDraft = L('F', 9000);
+  const over = buildChatMessages([round('i1', 'o1')], longDraft, 'enh', 8000);
+  assert.equal(over.messages.length, 1, 'historyBudget = max(0, 8000-9000) = 0 → 无历史消息');
+  assert.equal(over.messages[0].content[0].text, longDraft, '草稿全文注入（永不截断）');
+  assert.equal(over.memChars, 0);
+  // ③ 分配（spec §3.2/3.3）：historyBudget = 8000 - 5 = 7995；perRoundCap = floor(7995/3) = 2665；
+  //    每轮 input/output 各占一半 = floor(2665/2) = 1332；两轮 → 4 条历史 + 最终
   const two = buildChatMessages([
-    { input: 'i1', output: 'o1' },
-    { input: 'i2', output: 'o2' },
-  ], 'final', 'enh', 4000);
+    round(mk(L('A', 1332), L('a', 10)), mk(L('B', 1332), L('b', 10))),
+    round(mk(L('C', 1332), L('c', 10)), mk(L('D', 1332), L('d', 10))),
+  ], 'final', 'enh', 8000);
   assert.deepEqual(two.messages.map((m) => m.role), ['user', 'assistant', 'user', 'assistant', 'user']);
-  assert.deepEqual(two.messages.map((m) => m.content[0].text), ['i1', 'o1', 'i2', 'o2', 'final']);
+  assert.deepEqual(two.messages.map((m) => m.content[0].text), [L('A', 1332), L('B', 1332), L('C', 1332), L('D', 1332), 'final']);
+  assert.equal(two.memChars, 4 * 1332, '历史注入 = 4 × 1332');
   assert.equal(new Set(two.messages.map((m) => m.id)).size, 5, 'id 唯一');
   assert.equal(two.messages[1].source.kind, 'assistant');
-  // 预算 0 → 无历史消息（仅最终）
-  const zero = buildChatMessages([{ input: 'i1', output: 'o1' }], 'final', 'enh', 0);
+  // ④ perRoundCap 固定除以 3（轮数更少也不放大单轮额度，spec §3.3）
+  const one = buildChatMessages([round(mk(L('A', 1332), L('a', 10)), mk(L('B', 1332), L('b', 10)))], 'final', 'enh', 8000);
+  assert.equal(one.messages[0].content[0].text.length, 1332, '单轮 input 仍为 1332（非 7995/2）');
+  assert.equal(one.memChars, 2664);
+  // ⑤ 轮数上限 3（D4）：>3 轮**整轮丢弃最老的**（不是把所有轮次一起切碎）
+  const five = [];
+  for (let i = 1; i <= 5; i++) five.push(round('in' + i, 'out' + i));
+  const capped = buildChatMessages(five, 'final', 'enh', 8000);
+  assert.equal(capped.messages.length, 7, '3 轮 ×2 + 最终');
+  assert.deepEqual(capped.messages.map((m) => m.content[0].text), ['in3', 'out3', 'in4', 'out4', 'in5', 'out5', 'final']);
+  // ⑥ 行边界截断（spec §3.4）：逐行累积、放不下即停——围栏 / JSON 行 / 路径不得切一半
+  const fence = ['\u0060\u0060\u0060json', '{"a": 1,', '"b": 2}', '\u0060\u0060\u0060', 'D:/work/a.txt'];
+  const finalLen = 8000 - 180; // historyBudget = 180 → perRoundCap 60 → 半额 30
+  const cut = buildChatMessages([round(fence.join('\n'), 'OUT')], L('f', finalLen), 'enh', 8000);
+  const got = cut.messages[0].content[0].text;
+  assert.equal(got, fence.slice(0, 4).join('\n'), '仅装入完整行（围栏 + 两行 JSON 行完整）');
+  assert.equal(got.includes('D:/work'), false, '路径未被切一半');
+  assert.ok(got.length <= 30, '半额上限未被突破');
+  assert.equal(cut.messages[1].content[0].text, 'OUT', '输出侧独立按半额装填');
+  // v4.1-E（Lead 集成验收缺陷修复）：单行超半额 → **字符级兜底 slice(0, 半额)**，不再退化为空消息
+  const wide = buildChatMessages([round(L('X', 5000), L('Y', 5000))], 'final', 'enh', 8000);
+  assert.equal(wide.messages.length, 3, '单行超限 → 两侧字符级兜底 + 最终');
+  assert.equal(wide.messages[0].content[0].text, L('X', 1332), 'user 侧兜底 = slice(0, 1332)（非空）');
+  assert.equal(wide.messages[1].content[0].text, L('Y', 1332), 'assistant 侧兜底 = slice(0, 1332)');
+  assert.equal(wide.memChars, 2664);
+  assert.ok(wide.messages.every((m) => m.content[0].text.length > 0), '任何注入消息 content 不得为空');
+  // ⑦ 预算 0 / 非法预算 → 仅最终消息
+  const zero = buildChatMessages([round('i1', 'o1')], 'final', 'enh', 0);
   assert.equal(zero.messages.length, 1);
   assert.equal(zero.memChars, 0);
-  // 预算截断：历史文本合计 ≤ 预算档位本身（v4.0.0：原 2400 封顶放开）
-  const big = buildChatMessages([{ input: 'x'.repeat(5000), output: 'y'.repeat(5000) }], 'final', 'enh', 4000);
-  assert.equal(big.messages[0].content[0].text.length, 1333, '输入截到 4000/3');
-  assert.equal(big.messages[1].content[0].text.length, 2667, '输出截到 4000*2/3');
-  assert.equal(big.memChars, 4000, '总注入 = 预算档位（4000）');
-  // 档位区分度：16000 档下单轮 5000+5000 完整保留（未触顶；4000 档会截断）
-  const b16 = buildChatMessages([{ input: 'x'.repeat(5000), output: 'y'.repeat(5000) }], 'final', 'enh', 16000);
-  assert.equal(b16.messages[0].content[0].text.length, 5000, '16000 档输入 5000 完整保留（轮预算 5333 未触顶）');
-  assert.equal(b16.messages[1].content[0].text.length, 5000, '16000 档输出 5000 完整保留');
-  assert.equal(b16.memChars, 10000, '5000+5000 全保留');
-  // 轮数上限：>4 轮只取最近 4 轮
-  const five = [];
-  for (let i = 1; i <= 5; i++) five.push({ input: 'in' + i, output: 'out' + i });
-  const capped = buildChatMessages(five, 'final', 'enh', 4000);
-  assert.equal(capped.messages.length, 9, '4 轮 ×2 + 最终');
-  assert.equal(capped.messages[0].content[0].text, 'in2');
-  assert.equal(capped.messages[7].content[0].text, 'out5');
+  // ⑧ 档位区分度：16000 档半额 = floor(floor(15995/3)/2) = 2665（8000 档为 1332）
+  const wide16 = buildChatMessages([round(mk(L('A', 2665), L('a', 2665)), mk(L('B', 2665), L('b', 2665)))], 'final', 'enh', 16000);
+  assert.equal(wide16.messages[0].content[0].text.length, 2665, '16000 档半额 2665');
+  assert.equal(wide16.messages[1].content[0].text.length, 2665);
+  assert.equal(wide16.memChars, 5330);
+});
+
+// v4.1（D17·spec §3.5）：澄清问答独立参考消息——独立预算 min(2000, floor(预算/4))、不占 3 轮。
+test('U48b buildClarifyMessage 澄清独立通道（v4.1 D17）', () => {
+  const HEAD = '以下是澄清问答记录：模型提问 / 用户答复';
+  // ① 方向标注：模型提问 / 用户答复；via 有值时附来源
+  const msg = buildClarifyMessage([
+    { q: '「它」指哪个函数？', a: 'loadPlugins', via: 'option' },
+    { q: '用什么框架？', a: 'Vue 3 + TS', via: 'custom' },
+  ], 8000);
+  assert.ok(msg.startsWith(HEAD), '开头标注「模型提问 / 用户答复」');
+  assert.ok(msg.includes('模型提问：「它」指哪个函数？'));
+  assert.ok(msg.includes('用户答复：loadPlugins（选项作答）'));
+  assert.ok(msg.includes('用户答复：Vue 3 + TS（自由输入）'));
+  // ② 预算封顶 2000（32000 档仍为 2000）；v4.1-E：超长单答案 → 字符级兜底（截断但不空、不半对）
+  const cappedMsg = buildClarifyMessage([{ q: 'Q', a: 'x'.repeat(4000) }], 32000);
+  assert.ok(cappedMsg.length <= 2000, 'cap = min(2000, floor(32000/4)) = 2000');
+  assert.ok(cappedMsg.includes('模型提问：Q') && cappedMsg.includes('用户答复：'), '兜底仍带完整问答骨架（非半对）');
+  assert.ok(cappedMsg.length > 100, '兜底内容非空');
+  assert.ok(buildClarifyMessage([{ q: 'Q', a: 'x'.repeat(1500) }], 32000).length <= 2000);
+  // ③ 预算 = min(2000, floor(预算/4))：1000 → 250；整对放不下 → 字符级兜底装入（不丢对、不半对）
+  const small = buildClarifyMessage([{ q: 'Q1', a: 'A1' }, { q: 'Q2', a: 'B'.repeat(400) }], 1000);
+  assert.ok(small.length <= 250, 'cap = floor(1000/4) = 250');
+  assert.ok(small.includes('Q1') && small.includes('模型提问：Q2') && small.includes('用户答复：'), '第二对兜底装入');
+  assert.ok(small.includes('B'.repeat(50)), '答案截断后仍有内容');
+  assert.equal(small.split('模型提问：').length - 1, 2, '两对都有「模型提问」行（无半对）');
+  // ④ 空 / 无问答 / 预算 0 → 空串（不注入；问答仍在证据正文 JSON 中）
+  assert.equal(buildClarifyMessage([], 8000), '');
+  assert.equal(buildClarifyMessage(null, 8000), '');
+  assert.equal(buildClarifyMessage([{ q: 'Q', a: 'A' }], 0), '');
+  assert.equal(buildClarifyMessage([{ q: '', a: '' }], 8000), '');
+  // ⑤ v4.1-E：骨架都放不下（cap 仅略大于头部）→ 不注入空条目 / 半对
+  assert.equal(buildClarifyMessage([{ q: 'Q', a: 'A' }], 4 * 30), '', 'cap=30 ≤ 骨架 → 不注入');
+  // ⑥ v4.3（spec §3）：via='keep'（保留原句，a 为空串）渲染为「（保留原句，不作答）」，模型可见且不得再问
+  const keepMsg = buildClarifyMessage([{ q: '用哪个框架？', a: '', via: 'keep' }], 8000);
+  assert.ok(keepMsg.includes('模型提问：用哪个框架？'));
+  assert.ok(keepMsg.includes('用户答复：（保留原句，不作答）'), 'keep 条目明确渲染');
+  // keep 与普通答复混排时各自渲染（keep 不吞掉后续条目）
+  const mixedKeep = buildClarifyMessage([
+    { q: 'Q1', a: '', via: 'keep' },
+    { q: 'Q2', a: 'A2', via: 'option' },
+  ], 8000);
+  assert.ok(mixedKeep.includes('用户答复：（保留原句，不作答）') && mixedKeep.includes('用户答复：A2（选项作答）'));
+});
+
+// v4.1-E（Lead 集成验收缺陷修复）：单行长草稿不得注入空消息——字符级兜底 + 围栏奇偶保护 + 无空消息。
+test('U48c truncate fallback 单行超限兜底与围栏保护（v4.1-E）', () => {
+  const L = (ch, n) => ch.repeat(n);
+  const BQ = '\u0060\u0060\u0060';
+  // ① 单行长草稿（中文常见写法）：半额 1332 → 兜底 slice(0, 1332)，非空
+  const zhLine = '请把这段中文提示词改得更清楚：' + L('需', 3000);
+  const r1 = buildChatMessages([{ input: zhLine, output: '优化结果' }], 'final', 'enh', 8000);
+  const u1 = r1.messages[0].content[0].text;
+  assert.equal(u1, zhLine.slice(0, 1332), '按行结果为空 → 字符级兜底 slice(0, 半额)');
+  assert.ok(u1.length > 0, 'user 消息不得为空（缺陷防回归）');
+  assert.ok(r1.messages.every((m) => m.content[0].text.length > 0), '无任何空 content 消息');
+  assert.equal(r1.memChars, 1332 + 4);
+  // ② 多行但首行即超半额 → 同样字符级兜底（非空）
+  const multi = L('甲', 4000) + '\n' + L('乙', 500);
+  const r2 = buildChatMessages([{ input: multi, output: 'OUT' }], 'final', 'enh', 8000);
+  assert.equal(r2.messages[0].content[0].text, L('甲', 1332), '首行超限 → 字符级兜底');
+  // ③ 围栏奇偶保护：字符级结果里围栏计数为奇数 → 回退到最后一个围栏之前
+  const fenced = L('x', 50) + BQ + L('y', 3000);
+  const r3 = buildChatMessages([{ input: fenced, output: 'OUT' }], 'final', 'enh', 8000);
+  const u3 = r3.messages[0].content[0].text;
+  assert.equal(u3, L('x', 50), '未闭合围栏整体剔除');
+  assert.equal(u3.includes(BQ), false);
+  // ④ 围栏回退后为空 → 保留字符级结果（宁可保留内容，不可空）
+  const openFence = BQ + L('z', 3000);
+  const r4 = buildChatMessages([{ input: openFence, output: 'OUT' }], 'final', 'enh', 8000);
+  const u4 = r4.messages[0].content[0].text;
+  assert.equal(u4, openFence.slice(0, 1332), '回退为空 → 保留字符级结果（非空）');
+  assert.ok(u4.length > 0);
+  // ⑤ 源侧本身为空 → 只注入非空侧，绝不注入空 content 消息
+  const r5 = buildChatMessages([
+    { input: '', output: '只有输出' },
+    { input: '只有输入', output: '' },
+  ], 'final', 'enh', 8000);
+  assert.deepEqual(r5.messages.map((m) => m.role), ['assistant', 'user', 'user']);
+  assert.deepEqual(r5.messages.map((m) => m.content[0].text), ['只有输出', '只有输入', 'final']);
+  assert.equal(r5.memChars, 8, '只有输入 4 + 只有输出 4');
+  // ⑥ 两侧源文本都为空（被 filter 剔除）→ 仅最终消息
+  const r6 = buildChatMessages([{ input: '', output: '' }], 'final', 'enh', 8000);
+  assert.equal(r6.messages.length, 1);
 });
 
 test('U13 既有用例回归计数', () => {
@@ -639,9 +782,9 @@ test('U37 parseTagsPayload / validateManifestFiles（v2.4.1 新契约）', () =>
   assert.equal(validateManifestFiles([{ name: 'plugin-host.js' }]).ok, false, '缺 content');
 });
 
-// v2.4.6（提示词外置）→ v4.0.0（三档重构）：skills/enhance/*.md 为事实源，plugin-host.js 生成区由
-// scripts/sync-prompts.mjs 生成。U40 断言两者一致（生成区 = md 逐行求值），
-// 防「改了 md 忘同步 / 手改生成区」两类漂移。
+// v2.4.6（提示词外置）→ v4.0.0（三档重构）→ v4.1（D15 公共层 + 档位增量）：skills/enhance/*.md 为事实源，
+// src/host/app.js 生成区由 scripts/sync-prompts.mjs 生成（6 项 md：lite 独立 + _shared/base + standard/expert 增量 + discipline + continue）。
+// U40 断言两者一致（数组常量 = md 逐行求值；拼接常量 = base + 增量字符串相加），防「改了 md 忘同步 / 手改生成区」两类漂移。
 // （原 U39 SYSTEM_PROMPT 语义保真契约随 base 模式删除，语义保真断言收编至 U39b；
 //   原 U40b 参考吸收契约随检索机制删除而整组移除。）
 test('U40 prompts 外置一致性（v4.0.0 三档）：生成区 = skills/enhance/*.md 逐行求值', () => {
@@ -668,24 +811,43 @@ test('U40 prompts 外置一致性（v4.0.0 三档）：生成区 = skills/enhanc
   // 生成区必须处于 ==PROMPTS-BEGIN== / ==PROMPTS-END== 标记内
   assert.ok(src.includes('// ==PROMPTS-BEGIN=='), '应含生成区起始标记');
   assert.ok(src.includes('// ==PROMPTS-END=='), '应含生成区结束标记');
-  // 逐文件核对（v4.0.0：三档 system + discipline + continue，共 5 项）
+  // 逐文件核对（v4.1·D15：lite 独立 + 公共层 base.md + standard/expert 档位增量 + discipline + continue，共 6 项 md）
+  const base = extractConst('BASE_PROMPT');
+  const standardDelta = extractConst('STANDARD_DELTA_PROMPT');
+  const expertDelta = extractConst('EXPERT_DELTA_PROMPT');
   assert.equal(extractConst('SYSTEM_LITE_PROMPT'), mdOf('lite/system.md'), 'SYSTEM_LITE_PROMPT 应与 skills/enhance/lite/system.md 一致');
-  assert.equal(extractConst('SYSTEM_STANDARD_PROMPT'), mdOf('standard/system.md'), 'SYSTEM_STANDARD_PROMPT 应与 skills/enhance/standard/system.md 一致');
-  assert.equal(extractConst('SYSTEM_EXPERT_PROMPT'), mdOf('expert/system.md'), 'SYSTEM_EXPERT_PROMPT 应与 skills/enhance/expert/system.md 一致');
+  assert.equal(base, mdOf('_shared/base.md'), 'BASE_PROMPT 应与 skills/enhance/_shared/base.md 一致');
+  assert.equal(standardDelta, mdOf('standard/system.md'), 'STANDARD_DELTA_PROMPT 应与 skills/enhance/standard/system.md 一致');
+  assert.equal(expertDelta, mdOf('expert/system.md'), 'EXPERT_DELTA_PROMPT 应与 skills/enhance/expert/system.md 一致');
   assert.equal(extractConst('DISCIPLINE_PROMPT'), mdOf('discipline.md'), 'DISCIPLINE_PROMPT 应与 skills/enhance/discipline.md 一致');
   assert.equal(extractConst('CONTINUE_PROMPT'), mdOf('assemble/continue.md'), 'CONTINUE_PROMPT 应与 skills/enhance/assemble/continue.md 一致');
+  // v4.1（D15）拼接契约：standard = base + 档位增量；expert = base + standard 增量 + expert 增量
+  // （生成区为字符串相加常量，不再是数组常量——故用正则取右侧表达式求值）
+  const concatValue = (name) => {
+    const m = src.match(new RegExp('const\\s+' + name + '\\s*=\\s*([^;]+);'));
+    assert.ok(m, name + ' 拼接常量未在生成区');
+    return new Function(
+      'const BASE_PROMPT = ' + JSON.stringify(base) + ';\n' +
+      'const STANDARD_DELTA_PROMPT = ' + JSON.stringify(standardDelta) + ';\n' +
+      'const EXPERT_DELTA_PROMPT = ' + JSON.stringify(expertDelta) + ';\n' +
+      'return ' + m[1] + ';'
+    )();
+  };
+  assert.equal(concatValue('SYSTEM_STANDARD_PROMPT'), base + '\n\n' + standardDelta, 'SYSTEM_STANDARD_PROMPT = BASE + STANDARD_DELTA');
+  assert.equal(concatValue('SYSTEM_EXPERT_PROMPT'), base + '\n\n' + standardDelta + '\n\n' + expertDelta, 'SYSTEM_EXPERT_PROMPT = BASE + STANDARD_DELTA + EXPERT_DELTA');
   // 已删除机制的事实源不得再出现在生成区（旧模式模板 / T2 增量轴 / 检索子技能 / 组装尾段）
   for (const gone of ['SYSTEM_PROMPT', 'SYSTEM_SMART_PROMPT', 'SYSTEM_PUBLISH_PROMPT', 'SYSTEM_INCREMENT_PROMPT', 'SYSTEM_INCREMENT_LITE_PROMPT', 'RELEVANCE_PROMPT', 'REFERENCE_GUIDE', 'DEV_INTENT_PROMPT', 'DOC_ANALYSIS_PROMPT', 'WEBSEARCH_PLAN_PROMPT', 'TASK_ANALYSIS_PROMPT', 'SMART_TAIL_PROMPT']) {
     assert.ok(!new RegExp('const\\s+' + gone + '\\s*=\\s*\\[').test(src), gone + ' 生成常量应已删除');
   }
   // continue.md 澄清问答条目契约（v4.0.0 3.2e）：记忆链 {q, a} 条目，不得重复已答问题
   const cont = extractConst('CONTINUE_PROMPT');
-  assert.ok(cont.includes('{q, a}') && cont.includes('不得重复'), 'continue 应含澄清问答条目说明（{q, a}，不得重复已答问题）');
+  assert.ok(cont.includes('{q, a, via}') && cont.includes('不得重复'), 'continue 应含澄清问答条目说明（{q, a, via}，不得重复已答问题）');
+  assert.ok(cont.includes('via="keep"') && cont.includes('保留原句'), 'continue 应写明 keep（保留原句）与 skipped 的保守语义（v4.3）');
 });
 
 // v4.0.0（三档重构）：SKILL_MANIFEST 结构断言——3 档 + 仅 t1 模板引用 + kind:none 检索声明
 // + SKILL_RETRIEVE_BUDGETS 全局三档预算（语义 = 记忆链总预算档位，取代按模式检索预算表）
-test('U40c SKILL_MANIFEST 技能元数据契约（v4.0.0 三档）', () => {
+test('U40c SKILL_MANIFEST 技能元数据契约（v4.1：三档 + 预算 8000/16000/32000）', () => {
   const mf = src.match(/const SKILL_MANIFEST = \{([\s\S]*?)\n\};/);
   assert.ok(mf, 'SKILL_MANIFEST 未在生成区');
   const body = mf[1];
@@ -708,16 +870,18 @@ test('U40c SKILL_MANIFEST 技能元数据契约（v4.0.0 三档）', () => {
     assert.ok(rm, mode + ' retrieve 未提取');
     assert.equal(JSON.parse(rm[1]).kind, 'none', mode + ' 检索声明应为 kind:none');
   }
-  // ④ 全局预算三档 [4000,8000,16000]
+  // ④ 全局预算三档 [8000,16000,32000]（v4.1 D3/spec §1）
   const bm = src.match(/const SKILL_RETRIEVE_BUDGETS = (\[[\s\S]*?\]);/);
   assert.ok(bm, 'SKILL_RETRIEVE_BUDGETS 未在生成区');
-  assert.deepEqual(new Function('return ' + bm[1])(), [4000, 8000, 16000], 'SKILL_RETRIEVE_BUDGETS 应为全局三档预算 [4000,8000,16000]');
+  const skillBudgets = new Function('return ' + bm[1])();
+  assert.deepEqual(skillBudgets, [8000, 16000, 32000], 'SKILL_RETRIEVE_BUDGETS 应为全局三档预算 [8000,16000,32000]');
+  assert.deepEqual(skillBudgets, BUDGET_OPTIONS, 'skills frontmatter 预算必须与 host BUDGET_OPTIONS 完全一致（防两处漂移）');
 });
 
-// v4.0.0（三档重构）：三档默认模板契约——
-// ① lite：零增量红线 + ≤ 原文 1.2 倍上限 + 语用锚点（疑问语气不升级）+ 语法性补全白名单；
-// ② standard：五步法底盘 + 意图动词化（开放集合、不打标签）+ 输出骨架与出现规则 + 简单输入门控；
-// ③ expert = standard 全部 + 要素盘点对照清单 + 阻塞级歧义 + 输出双协议（澄清 JSON 约束）；
+// v4.0.0（三档重构）→ v4.1（D6–D15）：三档默认模板契约——
+// ① lite：零增量红线 + 仅表达层调整（D6 删 1.2 倍上限 / 语法性补全白名单 / 疑问不升级）；
+// ② standard = base 公共层 + 档位增量：五步法底盘 + 意图动词化 + 输出骨架（D7 删简单输入门控，任何输入都出骨架）；
+// ③ expert = standard 全部 + 要素盘点对照清单 + 阻塞级歧义 + 输出双协议（澄清 JSON 约束，D13 不新增段落）；
 // ④ 纪律层：防注入声明 / 保护 token / 「原文」= 草稿 + 澄清答复 / 语言跟随输入（原 U39 断言收编于此；
 //   原 U39c 增量模板契约随 T2 轴删除而整组移除）。
 test('U39b 三档默认模板契约（v4.0.0）', () => {
@@ -732,15 +896,20 @@ test('U39b 三档默认模板契约（v4.0.0）', () => {
     return new Function('return [' + src.slice(start + startMark.length, end) + '].join(\'\\n\');')();
   };
   const lite = extractConst('SYSTEM_LITE_PROMPT');
-  const standard = extractConst('SYSTEM_STANDARD_PROMPT');
-  const expert = extractConst('SYSTEM_EXPERT_PROMPT');
+  // v4.1（D15）：standard/expert 不再是数组常量——由 BASE_PROMPT + 档位增量拼接生成（见 U40 拼接契约）
+  const base = extractConst('BASE_PROMPT');
+  const standardDelta = extractConst('STANDARD_DELTA_PROMPT');
+  const expertDelta = extractConst('EXPERT_DELTA_PROMPT');
+  const standard = base + '\n\n' + standardDelta;
+  const expert = standard + '\n\n' + expertDelta;
   const disc = extractConst('DISCIPLINE_PROMPT');
   // ① 轻量档：纯润色四要素（3.2a）
   assert.ok(lite.includes('零增量'), 'lite 应含零增量红线');
   assert.ok(lite.includes('不添加任何用户未提及的内容'), 'lite 应禁止添加未提及内容');
-  assert.ok(lite.includes('1.2 倍'), 'lite 应含 ≤ 原文 1.2 倍长度上限');
-  assert.ok(lite.includes('疑问语气不升级'), 'lite 应含语用锚点（疑问语气不升级为命令）');
-  assert.ok(lite.includes('主语'), 'lite 应含语法性补全白名单（补主语等）');
+  assert.equal(lite.includes('1.2 倍'), false, 'v4.1（D6）：≤ 原文 1.2 倍长度上限已删');
+  assert.equal(lite.includes('疑问语气不升级'), false, 'v4.1（D6）：疑问不升级条款已删（语用类型归入不可删集合）');
+  assert.equal(lite.includes('主语'), false, 'v4.1（D6）：语法性补全白名单已删');
+  assert.ok(lite.includes('表达层'), 'lite 应明确仅表达层调整（语义与体裁不动，D6）');
   assert.ok(lite.includes('证据正文'), 'lite 应含证据正文任务边界声明');
   assert.ok(lite.includes('示例 3'), 'lite 应含 2–4 组 before/after 示例（含疑问句保持示例）');
   // ② 标准/专家档共同底盘：五步法 + 语义保真底线 + 输出骨架与出现规则 + 门控 + 任务边界（3.2b）
@@ -754,8 +923,10 @@ test('U39b 三档默认模板契约（v4.0.0）', () => {
     assert.ok(text.includes('更新执行器是单独的一个功能'), name + ' 应含用户语义重构示例（执行器独立）');
     assert.ok(text.includes('## 任务') && text.includes('## 背景') && text.includes('## 本轮目标') && text.includes('## 要求') && text.includes('## 输出'), name + ' 应含五段输出骨架');
     assert.ok(text.includes('整段省略'), name + ' 应含出现规则（空段整段省略）');
-    assert.ok(text.includes('800 字符'), name + ' 应含简单任务 800 字符上限（门控继承）');
-    assert.ok(text.includes('不硬套骨架'), name + ' 应含简单输入门控');
+    assert.equal(text.includes('800 字符'), false, name + ' v4.1（D7）：简单输入 800 字符上限已删');
+    assert.equal(text.includes('不硬套骨架'), false, name + ' v4.1（D7）：简单输入门控已删');
+    assert.ok(text.includes('任何输入'), name + ' 应含「任何输入都出骨架」（D7）');
+    assert.ok(text.includes('不冗余'), name + ' 应含「输出不冗余、不凑段」软约束（D7）');
     assert.ok(text.includes('证据正文'), name + ' 应含证据正文任务边界声明');
   }
   // ②b 标准档专属：意图动词化（开放集合、不打标签）+ 目标识别（全局目标落【背景】）
@@ -768,7 +939,14 @@ test('U39b 三档默认模板契约（v4.0.0）', () => {
   }
   assert.ok(expert.includes('已明确') && expert.includes('缺失') && expert.includes('歧义'), 'expert 盘点应逐项判定已明确/缺失/歧义');
   assert.ok(expert.includes('"clarify": true'), 'expert 应含澄清信号固定 JSON');
-  assert.ok(expert.includes('≤3') && expert.includes('2–4 个选项'), 'expert 澄清约束应为 ≤3 题、每题 2–4 个选项');
+  // v4.3（spec §3）：提问的唯一准入口 + 1–3 题 + gap 0 选项 / ambiguity 2–4 选项 + keep 保守语义
+  assert.ok(expert.includes('提问的唯一准入口'), 'expert 应写明提问只能走该 JSON（v4.3 唯一准入口）');
+  assert.ok(expert.includes('不得在正文里反问用户'), 'expert 应禁止在正文里反问（v4.3）');
+  assert.ok(expert.includes('1–3'), 'expert 澄清题数应为 1–3（v4.3）');
+  assert.ok(expert.includes('kind="gap"') && expert.includes('kind="ambiguity"'), 'expert 应写明 gap/ambiguity 语义（v4.3）');
+  assert.ok(expert.includes('0–4 个建议选项'), 'expert 应写明 gap 可给 0–4 个建议选项（v4.3）');
+  assert.ok(expert.includes('必须 2–4 个'), 'expert 应写明 ambiguity 必须 2–4 个选项（v4.3）');
+  assert.ok(expert.includes('via="keep"') && expert.includes('保留原句'), 'expert 应写明 keep（保留原句、保持原文原样、不得再问）（v4.3）');
   assert.ok(expert.includes('clarifyAnswers'), 'expert 应说明澄清答复并入证据正文（与草稿同效力）');
   assert.ok(expert.includes('skipped'), 'expert 应说明跳过＝歧义点保持原文（不替用户选边）');
   // ④ 纪律层（v4.0.0 修订：防注入 / 保护 token / 原文定义；语言规则断言自原 U39 收编）
@@ -881,21 +1059,21 @@ test('U57 resolveTemplateSystem 模板选中解析（v4.0.0 单内置模板）',
 });
 
 // ================= v4.0.0 专家档澄清卡 · parseClarify 容错矩阵 =================
-test('U69 parseClarify 澄清信号 JSON 容错解析（v4.0.0）', () => {
-  // ① 合法信号（裸 JSON）：questions 归一化为 [{q, options}]
+test('U69 parseClarify 澄清信号 JSON 容错解析（v4.1：围栏/尾注健壮性 + kind 透传）', () => {
+  // ① 合法信号（裸 JSON）：questions 归一化为 [{q, options, kind}]（kind 缺省 'ambiguity'，spec §1 只透传不渲染）
   assert.deepEqual(
     parseClarify('{"clarify": true, "questions": [{"q": "「它」指哪个函数？", "options": ["parseConfig", "loadPlugins"]}]}'),
-    [{ q: '「它」指哪个函数？', options: ['parseConfig', 'loadPlugins'] }]
+    [{ q: '「它」指哪个函数？', options: ['parseConfig', 'loadPlugins'], kind: 'ambiguity' }]
   );
   // ② ```json 围栏剥离
   assert.deepEqual(
     parseClarify('```json\n{"clarify": true, "questions": [{"q": "用哪个框架？", "options": ["Vue", "React", "Svelte"]}]}\n```'),
-    [{ q: '用哪个框架？', options: ['Vue', 'React', 'Svelte'] }]
+    [{ q: '用哪个框架？', options: ['Vue', 'React', 'Svelte'], kind: 'ambiguity' }]
   );
-  // ③ 前后缀噪音（首尾大括号截取）
+  // ③ 前后缀噪音（花括号配对扫描定位对象）
   assert.deepEqual(
     parseClarify('需要澄清：\n{"clarify":true,"questions":[{"q":"Q1","options":["a","b"]}]}\n以上。'),
-    [{ q: 'Q1', options: ['a', 'b'] }]
+    [{ q: 'Q1', options: ['a', 'b'], kind: 'ambiguity' }]
   );
   // ④ 题数超限截断（≤3，保留前 3 题）
   const four = parseClarify(JSON.stringify({
@@ -925,13 +1103,13 @@ test('U69 parseClarify 澄清信号 JSON 容错解析（v4.0.0）', () => {
       { q: 'q4', options: ['a', 'b'] },          // 合法
     ],
   }));
-  assert.deepEqual(mixed, [{ q: 'q4', options: ['a', 'b'] }]);
+  assert.deepEqual(mixed, [{ q: 'q4', options: ['a', 'b'], kind: 'ambiguity' }]);
   // ⑦ clarify 不为真 → null（终稿输出不得误判为澄清；字符串 'true' 容错归一）
   assert.equal(parseClarify('{"clarify": false, "questions": [{"q": "q", "options": ["a", "b"]}]}'), null);
   assert.equal(parseClarify('{"questions": [{"q": "q", "options": ["a", "b"]}]}'), null);
   assert.deepEqual(
     parseClarify('{"clarify": "true", "questions": [{"q": "q", "options": ["a", "b"]}]}'),
-    [{ q: 'q', options: ['a', 'b'] }],
+    [{ q: 'q', options: ['a', 'b'], kind: 'ambiguity' }],
     "clarify 字符串 'true' 归一"
   );
   // ⑧ 无合法题目 → null
@@ -950,6 +1128,81 @@ test('U69 parseClarify 澄清信号 JSON 容错解析（v4.0.0）', () => {
   // ⑩ q 超长截断（200 字符上限）
   const longQ = parseClarify('{"clarify":true,"questions":[{"q":"' + '长'.repeat(300) + '","options":["a","b"]}]}');
   assert.equal(longQ[0].q.length, 200, 'q 截断到 200');
+  // ⑪ v4.1（spec §3.7 健壮性必修 A）：原始输出里**先出现的普通代码围栏**不得吞掉其后的澄清 JSON
+  const CJ = '{"clarify": true, "questions": [{"q": "前端框架？", "options": ["Vue", "React"]}]}';
+  const CJ_EXPECT = [{ q: '前端框架？', options: ['Vue', 'React'], kind: 'ambiguity' }];
+  assert.deepEqual(parseClarify('```js\nconst c = { a: 1 };\n```\n\n' + CJ), CJ_EXPECT, '普通围栏（内含花括号）在前仍须解析');
+  assert.deepEqual(parseClarify('```js\nconst c = 1;\n```\n```json\n' + CJ + '\n```'), CJ_EXPECT, '第二个围栏是 json → 仍须解析');
+  assert.deepEqual(parseClarify('```js\nfunction f() { return { a: 1 }; }\n```\n' + CJ), CJ_EXPECT, '围栏内代码含 } → 不得干扰');
+  // ⑫ v4.1（spec §3.7 健壮性必修 B）：JSON 后带含 } 的尾注（旧 lastIndexOf('}') 会截断失败）
+  assert.deepEqual(parseClarify(CJ + '\n补充：不要输出 {示例} 之类内容。'), CJ_EXPECT, '尾注含 } 仍须解析');
+  assert.deepEqual(parseClarify(CJ + '\n参考 {"other": 1}'), CJ_EXPECT, '后续别的对象不得干扰');
+  assert.deepEqual(parseClarify('{"note": "先说明"}\n' + CJ), CJ_EXPECT, '先出现非澄清对象 → 继续找澄清对象');
+  assert.equal(parseClarify('{"clarify":true,"questions":[{"q":"a}b","options":["x","y"]}]}')[0].q, 'a}b', '字符串内的花括号不得破坏配对扫描');
+  // ⑬ kind 透传（spec §1）：'gap' 保留；缺省/非法 → 'ambiguity'
+  assert.equal(parseClarify('{"clarify":true,"questions":[{"q":"Q","options":["a","b"],"kind":"gap"}]}')[0].kind, 'gap');
+  assert.equal(parseClarify('{"clarify":true,"questions":[{"q":"Q","options":["a","b"],"kind":"weird"}]}')[0].kind, 'ambiguity');
+  // ⑭ v4.3（spec §1）：kind='gap'（补信息）允许 0 个 options——旧口径 'options.length < 2 → continue'
+  //    会把零选项 gap 整题丢弃（只能自由输入的补信息场景全灭）
+  assert.deepEqual(
+    parseClarify('{"clarify":true,"questions":[{"kind":"gap","q":"期望的输出格式？"}]}'),
+    [{ q: '期望的输出格式？', options: [], kind: 'gap' }],
+    'gap 零选项通过（自由输入）'
+  );
+  assert.deepEqual(
+    parseClarify('{"clarify":true,"questions":[{"kind":"gap","q":"q","options":[]}]}'),
+    [{ q: 'q', options: [], kind: 'gap' }],
+    'gap 空数组 options 通过'
+  );
+  assert.deepEqual(
+    parseClarify('{"clarify":true,"questions":[{"kind":"gap","q":"q","options":["建议 A"]}]}')[0].options,
+    ['建议 A'],
+    'gap 允许 0–4 个建议选项（1 个也通过）'
+  );
+  assert.equal(
+    parseClarify('{"clarify":true,"questions":[{"kind":"gap","q":"q","options":["a","b","c","d","e"]}]}')[0].options.length,
+    4,
+    'gap 建议选项截断到 4'
+  );
+  // ambiguity 仍须 ≥2：1 个选项整题丢弃（v4.3 口径不变）
+  assert.equal(parseClarify('{"clarify":true,"questions":[{"kind":"ambiguity","q":"q","options":["only"]}]}'), null, 'ambiguity 1 选项仍丢弃');
+  // 混合 kind：gap（零选项）与 ambiguity（2–4 选项）同卡共存，无效题只丢自己
+  const mixedKinds = parseClarify(JSON.stringify({
+    clarify: true,
+    questions: [
+      { kind: 'ambiguity', q: 'q1', options: ['only'] },
+      { kind: 'gap', q: 'q2' },
+      { kind: 'ambiguity', q: 'q3', options: ['a', 'b'] },
+      { q: 'q4' },
+    ],
+  }));
+  assert.deepEqual(mixedKinds, [
+    { q: 'q2', options: [], kind: 'gap' },
+    { q: 'q3', options: ['a', 'b'], kind: 'ambiguity' },
+  ], '混合 kind：gap 零选项 + ambiguity 两选项共存，无效题各自丢弃');
+  // 题数仍 1–3：4 题（含 gap）截断为前 3
+  const fourKinds = parseClarify(JSON.stringify({
+    clarify: true,
+    questions: [
+      { kind: 'gap', q: 'g1' },
+      { kind: 'gap', q: 'g2' },
+      { kind: 'ambiguity', q: 'a3', options: ['a', 'b'] },
+      { kind: 'gap', q: 'g4' },
+    ],
+  }));
+  assert.equal(fourKinds.length, 3, '>3 题截断为前 3');
+  assert.deepEqual(fourKinds.map((x) => x.q), ['g1', 'g2', 'a3']);
+});
+
+// v4.1（spec §3.7 降级判定）：疑似澄清信号但解析失败 → 裸 JSON 不得当终稿（enhanceStageLlm 先重试一次）。
+test('U69b looksLikeClarifySignal 疑似澄清信号判定（v4.1）', () => {
+  assert.equal(looksLikeClarifySignal('{"clarify": true, "questions": [ oops ]}'), true, '残缺 JSON（含两个键名）→ 疑似');
+  assert.equal(looksLikeClarifySignal('```json\n{"clarify":true,"questions":[]}\n```'), true, '围栏不影响判定');
+  assert.equal(looksLikeClarifySignal('优化后的提示词正文。\n\n## 任务\n做 X'), false, '普通终稿不得误判');
+  assert.equal(looksLikeClarifySignal('{"questions": []}'), false, '缺 clarify 键 → 非疑似');
+  assert.equal(looksLikeClarifySignal(''), false);
+  assert.equal(looksLikeClarifySignal(null), false);
+  assert.equal(looksLikeClarifySignal(123), false);
 });
 
 // v2.5.0（一键更新并重启）：安装命令构造契约。

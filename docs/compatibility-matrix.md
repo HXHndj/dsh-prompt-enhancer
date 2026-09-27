@@ -88,8 +88,8 @@
 | key | 类型 | 默认 | 说明 |
 |---|---|---|---|
 | `mode` | string | `standard` | 优化模式（v4.0.0 三档：`lite`/`standard`/`expert`；旧值迁移：base→standard、lite→lite、smart/publish→expert、`memory`→lite） |
-| `memory` | boolean | `true` | 记忆流开关（v4.0.0 起默认开启；三值语义——历史显式 `false` 保持关闭） |
-| `context.budgetChars` | number | `4000` | 记忆链总预算（v4.0.0 起全局单选 4000/8000/16000；旧值 0/2000→4000、32000→16000，不再按模式分档） |
+| `memory` | boolean | `true` | 记忆流开关（v4.0.0 起默认开启；三值语义——历史显式 `false` 保持关闭）；链长 ≤3 轮（每轮 = 草稿 + 优化结果）；清链触发 = 发送消息 / 手动清空输入框 / 切换优化模式，刷新保留（按会话持久化）；**v4.4：专家档固定视为开启（存储值不覆盖，开关仅对轻量/标准生效）** |
+| `context.budgetChars` | number | `8000` | 记忆链总预算（v4.1 起全局单选 8000/16000/32000；旧值 0/2000/4000/非法→8000，8000/16000/32000 原样保留——32000 不再降级；不再按模式分档） |
 | `timeoutMs` | number | 见代码 | 超时（按档位默认 30s/30s/60s = 轻量/标准/专家） |
 | `maxTokens` | number | 见代码 | token 上限（按档位 2000/2000/4000；推理链自动放宽 ≥8000 不变） |
 | `outputLimit` | number | 见代码 | 输出上限（按档位 8000/8000/16000，超限判失败走下一条模型） |
@@ -114,7 +114,9 @@
 | key | 说明 |
 |---|---|
 | `dsh-prompt-enhancer:config` | 配置缓存（重构后迁移至 entry config） |
-| 会话内存 `memoryRounds` | 记忆链（仅内存） |
+| 会话内存 `memoryRounds` | 记忆链（RPC 载荷，仅内存，≤3 轮） |
+| `dsh-enh-memory:<sessionId>` | 记忆链持久化（刷新保留；清链时 `removeItem`；与 `dsh-enh-result:<sessionId>` 独立） |
+| `dsh-enh-clarify:<sessionId>` | 澄清问答持久化（v4.4：已答/keep 记录随链存活，后续每次优化携带；刷新保留；清链三触发同步 `removeItem`；撤销优化不回退；≤9 条） |
 
 ---
 
@@ -133,7 +135,8 @@
 | 3.5.4 | `protocolVersion: 1` | 0.1.12+（内容哈希重建） | **▾ 菜单两级下钻**（纯呈现层级重构，数据与写入通道零变化）：一级恒三行（记忆开关就地切换 / 模型选择 / 努力程度，行内显示当前值）；模型与努力程度下钻二级面板（返回头 + 分组列表/efforts + ✓）；下钻落当前行、返回落原格、Escape 逐级退出；仍写 `fallback[0]` 与设置页双向同步 |
 | 3.5.5 | `protocolVersion: 1` | 0.1.12+（内容哈希重建） | **三处对齐修复 + 记忆链开关控件**（纯客户端呈现层，host RPC 面与配置 schema 零改动）：▾ 触发器字形归位 hover 高亮胶囊中心（`padding:0 4px` + `justify-content:center`，胶囊总宽不变）；「撤销优化 / 继续优化」纯文字态补 `.dsh-enh-btn-center`（左右 6/6，胶囊总宽不变）；▾ 菜单一级记忆行值位改开关控件（形态/色板对齐宿主原生 Switch：36×20 轨道 + 16px 滑块 + `translateX(16px)`，关 = `border-l3` / 开 = `brand-primary` / 滑块 = `label-primary-foreground`），行 `role=menuitemcheckbox` + `aria-checked` 承载状态 |
 | 3.5.6 | `protocolVersion: 1` | 0.1.12+（内容哈希重建） | **▾ 菜单新增「模式切换」一级行 + 二级模式面板**（纯客户端呈现层扩展，host RPC 面与配置 schema 零改动）：一级第 4 行（行内当前模式短标签 + `›`）→ 二级面板列 `MODE_OPTIONS` 全量 5 模式（全称 + `✓` 当前；选中自定义模板的模式带模板名标签）；选择写 `config.mode` + 该模式默认档位（与设置页 ParamsTab 同语义），经 `subscribeConfig` 联动输入框主键短标签与设置页；返回归位改按 key 查（`rootKeysRef` 行序镜像，努力程度行隐藏时不错位） |
-| 4.0.0（当前） | `protocolVersion: 1` | 0.1.12+（内容哈希重建） | **BREAKING：三档重构**——五模式收敛为 轻量/标准/专家（默认 standard，T1/T2 双模板由档位吸收，`template.pick` 旧键 increment/supplement/dev→default）；**全部会话/工作区/网络检索下线**（`retrieve` stage 移除，管道 4→3：analyze→assemble→llm；旧 base/smart/publish 模式删除，配置自动迁移 base→standard、smart/publish→expert）；专家档新增**歧义澄清卡**：enhance 请求可选 `answers`（`[{q,a}]`）/`skip` 透传、响应新增 `clarify` 分支（向后兼容，旧 client 不受影响）；草稿以 JSON 证据正文注入（防注入）＋保护 token 纪律；记忆流默认开启（三值语义）；上下文预算收敛为全局 4000/8000/16000（记忆链预算，旧值自动迁移）；运行参数按档位（30/30/60s、2000/2000/4000、8000/8000/16000） |
+| 4.1.0（当前） | `protocolVersion: 1` | 0.1.12+（内容哈希重建） | **记忆流语义修订 + 澄清卡 kind 协议 + 澄清记录入链 + 按钮三态 + 专家档固定记忆**：记忆流清链三触发（发送/手动清空/切模式，含 localStorage 残键清扫）+ 刷新保链（`dsh-enh-memory:` 键）+ 预算改 8000/16000/32000（32000 不再降级）+ 轮数 ≤3 + 草稿永不截断/整轮装填/行边界截断+ 澄清问答独立通道（不占轮次）；澄清答案 `via` 扩为 option/custom/**keep**（v4.3：keep = 保留原句、a 空串；跳过 = `skip:true` + 全题 keep 条目）；澄清记录持久化 `dsh-enh-clarify:` 键、随每次请求携带（v4.4）；`parseClarify` 容错加固（围栏/尾注/重试/CLARIFY_MALFORMED，裸 JSON 不当终稿）；专家档 `mode:'expert'` 记忆恒视为开（v4.4，开关仅 lite/standard 生效）；按钮三态「重新优化/继续优化」与 host diff 同源（v4.4）；`req.continue` 死字段删除。全部向后兼容（配置自动迁移，旧 client 不受影响） |
+| 4.0.0 | `protocolVersion: 1` | 0.1.12+（内容哈希重建） | **BREAKING：三档重构**——五模式收敛为 轻量/标准/专家（默认 standard，T1/T2 双模板由档位吸收，`template.pick` 旧键 increment/supplement/dev→default）；**全部会话/工作区/网络检索下线**（`retrieve` stage 移除，管道 4→3：analyze→assemble→llm；旧 base/smart/publish 模式删除，配置自动迁移 base→standard、smart/publish→expert）；专家档新增**歧义澄清卡**：enhance 请求可选 `answers`（`[{q,a,via}]`，via=option|custom，自由输入与草稿同效力且优先于同题选项）/`skip` 透传、响应新增 `clarify` 分支（questions[].kind=ambiguity|gap，仅透传不渲染；向后兼容，旧 client 不受影响）；草稿以 JSON 证据正文注入（防注入）＋保护 token 纪律；记忆流默认开启（三值语义；链长 ≤3 轮——发送消息 / 手动清空输入框 / 切换优化模式即清链，刷新保留，澄清问答独立通道不占轮次）；上下文预算收敛为全局记忆链预算（现行档位 8000/16000/32000，默认 8000；旧值 0/2000/4000/非法→8000，32000 不再降级）；运行参数按档位（30/30/60s、2000/2000/4000、8000/8000/16000） |
 
 兼容策略：
 

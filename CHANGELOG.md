@@ -1,7 +1,8 @@
 # Changelog
 
 [3.3.3]: https://github.com/Fishsb/dsh-prompt-enhancer/compare/v3.3.2...v3.3.3
-[Unreleased]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v4.0.1...HEAD
+[Unreleased]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v4.1.0...HEAD
+[4.1.0]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v4.0.1...v4.1.0
 [4.0.1]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v4.0.0...v4.0.1
 [4.0.0]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v3.5.6...v4.0.0
 [3.5.6]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v3.5.5...v3.5.6
@@ -22,11 +23,27 @@
 
 > 🗺️ 条目内的 `flow:` 标注为功能链路标签（原 pmg 项目地图 `docs/map/` 已随 pmg 于 2026-09-10 移除，该路径不再存在）；agent 开工前先读 [`AGENTS.md`](AGENTS.md)。
 
-## [Unreleased]
+## [4.1.0] - 2026-09-27
+
+v4.0.x 后四批用户决策的整体落地（决策记录：`docs/plan-v4.1-decisions.md` / `docs/plan-v4.3-decisions.md` / `docs/plan-v4.4-decisions.md`）；配置自动迁移，无 BREAKING。
+
+### Added
+
+- **专家档澄清卡·问题分类与「保留原句」（v4.3·questions[].kind 协议）** `flow:enhance-ui`：澄清问题分两类——`gap`（补信息：可 0–4 个建议选项或纯自由输入，卡片恒带「保留原句」行）与 `ambiguity`（消歧：必须 2–4 选项 + 自由输入），`kind` 缺省按 ambiguity；问题内容/选项/类型全部由优化模型判断生成，一次 1–3 题；答案协议 `via ∈ {option, custom, keep}`（keep = 该点保留原句，a 为空串）；「跳过直接优化」= `skip:true` + 全部题各附 keep 条目（保守策略：歧义/缺漏点保持原文原样，不替用户选边）；零作答时提交禁用（双保险：UI 禁用 + 程序化降级 skip，杜绝「原地重问」死循环）；`parseClarify` 放行 gap 0 选项；纪律层补 keep 例外（keep 不构成明确化依据、不得再问）。**已实测**：`npm test` 239/239（新增 gap/keep/跳过/混合 kind 用例）+ 真实渲染核验（gap 题输入+保留原句与 ambiguity 题选项+输入同卡共存、提交/跳过两路径正确、keep 后下一轮不再追问）。
+- **澄清记录入链（v4.4·继续优化不重复问）** `flow:enhance-pipeline`：已答 / keep 的澄清问答存入新持久化键 `dsh-enh-clarify:<sessionId>`，随后的**每一次**优化请求都携带（此前只在「提交答案→出终稿」单次请求内有效，继续优化即丢失、可能重复追问）；刷新随链恢复；清链三触发（发送/手动清空/切模式）同步清除；撤销优化不回退（已答是用户的事实性决定）；澄清卡取消只放弃未提交的题、保留已入库历史（旧实现误清）。host 零改动（本就每次消费 `req.answers`）。**已实测**：`npm test` 245/245（V1/V3 用例：刷新恢复/三触发清除/undo 保留/失败保留/取消不清历史/普通优化仍携带）。
+- **按钮三态：首次 → 重新优化 / 继续优化（v4.4）** `flow:enhance-ui`：优化成功后，草稿与最近优化结果逐字节一致 → **「重新优化」**（host 不注入继续指令，从零重跑，所见即所得）；已修改 → 「继续优化」（注入继续指令 + 修改摘要）。判定与 host 行级 diff 数学同源（`computeEditDelta` 剥公共前后缀后差异段为空 ⟺ 逐字节相等），UI 承诺与后端行为一致；记忆关闭的轻量/标准档以最近结果正文为基准同规则。`req.continue` 死字段删除（host 从未消费）。**已实测**：V4 双用例（含改回原样变「重新优化」、斜杠命令按正文对比、undo 回首次态、无链回退）。
+- **专家档固定开启记忆（v4.4）** `flow:enhance-pipeline`：`cfg.mode === 'expert'` 时记忆恒视为开——client 恒携带 rounds/恒写链、host 注入判定恒真（双侧同口径）；存储值不覆盖（切回轻量/标准恢复用户原值）；设置页与 ▾ 菜单的记忆开关在专家档置灰并提示（`cfgMemoryExpertLocked`，✨ 图标不再因开关变灰）。**已实测**：V6 用例（expert + memory=false 仍写链/携带；lite 对照不写；host 源码锚双侧一致）+ gate/i18n 平衡。
+
+### Changed
+
+- **记忆流语义修订（v4.1·D1–D4/D17）** `flow:enhance-pipeline`：①清链三触发 = 发送消息 / **手动清空输入框**（与发送统一为「同会话内非空→空」跳变判定，首屏/刷新空草稿不误清）/ **切换优化模式**（config.mode 跳变统一覆盖设置页与 ▾ 菜单两入口，并清扫已释放会话的 localStorage 残键）；②**刷新保链**（新键 `dsh-enh-memory:<sessionId>`，恢复时字段白名单 + 截 3 轮，链非空即「可继续优化」）；③预算档位改 **8000（默认）/16000/32000**（删除 v4.0.0 的「32000→16000」降级；旧 0/2000/4000/非法 → 8000）；④轮数上限 4 → **3**（双侧一致）；⑤注入分配重写：当前草稿**永不截断**、`historyBudget = 预算 − 草稿长度`、每轮 input/output 各半、由近及远**整轮装填**（放不下整轮丢弃最老）、截断按行边界 + 单行超限字符级兜底 + 围栏奇偶保护、绝不注入空消息；⑥澄清问答走**独立通道**（独立参考消息，预算 `min(2000, ⌊预算/4⌋)`，不占三轮名额）。**已实测**：`npm test` 229/229（当时）+ 注入量探针（3 轮 + 8000 预算 + 2000 字草稿 → 历史 5364 字符无空消息；32000 预算下单行 3000 字草稿完整保留）。
+- **三档 skill 按用户原话修订（v4.1·D6–D15）** `flow:enhance-pipeline`：**轻量**删 1.2 倍上限/语法性补全白名单/疑问不升级，「调整结构」限定表达层；**标准**任何输入都出骨架（删简单输入门控与 800 字符硬上限，改「不冗余、不凑段」）、补 `## 本轮目标` 真实示例与成段规则（「这轮/本次/先……」范围限定且任务较复杂才独立成段）、删「禁止把疑问升级」（保留提问焦点不丢失）/删软性语气升格/删越界明确化示例（结构层面统一走五步法三逻辑重组）、稳定性限定为跨次运行确定性；**专家**改「公共层 `_shared/base.md` + 档位增量」拼接生成（`sync-prompts` 生成 `SYSTEM_STANDARD_PROMPT = BASE + STANDARD_DELTA`、`SYSTEM_EXPERT_PROMPT = BASE + STANDARD_DELTA + EXPERT_DELTA`，杜绝整份复制漂移）、澄清始终开启、`questions[].kind` 透传。**已实测**：`sync-prompts --check` 产物逐字节一致 + 被删条款在产物中 0 命中。
+- **澄清卡 UI 对齐原生 ask-user 形态（v4.2）** `flow:enhance-ui`：卡体改原生 ask-user 配方（xl 圆角 / input-major 底 / panel elevation / header 24px 图标取消 / `button[role=radio]` + aria-checked 选项 / autosize textarea / 官方按钮组），外层 `.dsh-enh-dock` 几何外壳修输入框下方左偏；错误文案补 `CLARIFY_MALFORMED`/`NO_RECORD` 映射（修「优化失败：优化失败」双前缀）。**已实测**：隔离临时实例 + headless Edge 真实渲染核验（同会话留档 shots/*.png）。
 
 ### Fixed
 
-- **发布脚本二进制资产上传：tgz 被 JSON 化截断后仍报「发布成功」**（v4.0.1 发布当场命中；线上产物已重传修复）：`scripts/release.mjs` 的 `http()` 把**非字符串请求体一律 `JSON.stringify`**——tgz（Buffer）因此被写成 `{"type":"Buffer","data":[...]}` 文本、再按 `content-length` 截断，GitHub 仍返回 201，于是**发布了 21 万字节的损坏资产**（同根因导致紧随其后的 `.sha256` 资产上传 400：同一 keep-alive 连接体量错位）。修复：`Buffer.isBuffer(body)` 与 string 一律原样写，仅对象才 JSON 化。**加固**：`sha256` 提前到上传前计算，上传完成后按 API 资产 `digest` + 字节数**自校验**，不一致即 `exit 1`——把「传上去了但内容不对」从静默面变成发布当场可见。**已实测**：用修好后的 `http()` 实测上传 64KiB 随机二进制 → `201` 且 `digest` 与本地 sha256 一致（临时资产已删除）；v4.0.1 线上资产已重传并复验——`dsh-prompt-enhancer-4.0.1.tgz` 211,911B / `sha256:4006c9f6…`（gzip 魔数 `1f8b`；经 API 资产端点与 `browser_download_url` 两条路径下载均与本地逐字节一致），`.sha256` 资产 96B 且解析值一致；对照 **v4.0.0** 资产（210,626B，digest 与随附 `.sha256` 一致）确认该缺陷为本脚本路径首次触发、历史发布未受影响。`node --check scripts/release.mjs` 通过。
+- **发布脚本二进制资产上传：tgz 被 JSON 化截断后仍报「发布成功」**（v4.0.1 发布当场命中；线上产物已重传修复）：`scripts/release.mjs` 的 `http()` 把非字符串请求体一律 `JSON.stringify`——tgz（Buffer）被写成 JSON 文本再按 content-length 截断，GitHub 仍 201，发布了损坏资产。修复：Buffer/string 原样写，仅对象 JSON 化；加固：sha256 提前计算，上传后按 API 资产 `digest` + 字节数自校验，不一致 `exit 1`。**已实测**：修好后实测上传 64KiB 随机二进制 → 201 且 digest 一致；v4.0.1 线上资产重传复验逐字节一致。
+- **澄清信号解析两处硬伤（v4.1）**：原始输出**先出现的普通代码围栏**会把真正的澄清 JSON 吞掉（围栏正则命中第一个）；JSON 后带含 `}` 尾注使 `lastIndexOf('}')` 截断解析失败。改花括号配对扫描逐对象尝试；疑似澄清信号解析失败先整请求重试一次，仍失败报 `CLARIFY_MALFORMED`（草稿保持原样，**裸 JSON 绝不当终稿**）。**已实测**：parseClarify 容错矩阵 23 例（围栏前置/尾注/半截 JSON/无 clarify 键等）。
 
 ## [4.0.1] - 2026-09-27
 

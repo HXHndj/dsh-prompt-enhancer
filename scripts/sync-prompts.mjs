@@ -28,17 +28,44 @@ const BEGIN = '// ==PROMPTS-BEGIN==';
 const END = '// ==PROMPTS-END==';
 
 // v3.2.23（用户需求·技能集合化）：事实源从平铺 prompts/ 迁移到技能包 skills/enhance/。
-// v4.0.0（三档重构）：T1/T2 轴由档位吸收、检索整体移除——NAME_MAP 收敛为 5 项：
-// 三档 system（lite/standard/expert）+ 全局纪律 + 继续优化指令；旧 19 项映射随
-// base/smart/publish、increment、retrieval、task-analysis/smart 尾段的删除一并移除。
+// v4.0.0（三档重构）：T1/T2 轴由档位吸收、检索整体移除。
+// v4.1（D15 公共层 + 档位增量）：NAME_MAP 登记全部被发现的 md——公共层 _shared/base.md
+// 只是拼接部件，standard/expert 的 system.md 只写档位增量；注入给模型的档位提示词由
+// COMPOSED 在生成区拼接（SYSTEM_STANDARD_PROMPT = BASE + STANDARD_DELTA，
+// SYSTEM_EXPERT_PROMPT = BASE + STANDARD_DELTA + EXPERT_DELTA），lite 独立不拼接。
 const SKILL_ROOT = 'skills/enhance';
 const NAME_MAP = {
+  '_shared/base.md': 'BASE_PROMPT',
   'lite/system.md': 'SYSTEM_LITE_PROMPT',
-  'standard/system.md': 'SYSTEM_STANDARD_PROMPT',
-  'expert/system.md': 'SYSTEM_EXPERT_PROMPT',
+  'standard/system.md': 'STANDARD_DELTA_PROMPT',
+  'expert/system.md': 'EXPERT_DELTA_PROMPT',
   'discipline.md': 'DISCIPLINE_PROMPT',
   'assemble/continue.md': 'CONTINUE_PROMPT',
 };
+
+// 档位 → 注入给模型的完整提示词常量（v4.1：只有这里能作为档位模板，base 单独成档即缺陷）
+const MODE_TEMPLATE = {
+  lite: 'SYSTEM_LITE_PROMPT',
+  standard: 'SYSTEM_STANDARD_PROMPT',
+  expert: 'SYSTEM_EXPERT_PROMPT',
+};
+// 组合常量（D15）：parts 用 '\n\n' 拼接（层间留空行）；声明顺序在部件之后，见 buildSection
+const COMPOSED = [
+  { name: 'SYSTEM_STANDARD_PROMPT', parts: ['BASE_PROMPT', 'STANDARD_DELTA_PROMPT'] },
+  { name: 'SYSTEM_EXPERT_PROMPT', parts: ['BASE_PROMPT', 'STANDARD_DELTA_PROMPT', 'EXPERT_DELTA_PROMPT'] },
+];
+for (const c of COMPOSED) {
+  for (const part of c.parts) {
+    if (!Object.values(NAME_MAP).includes(part)) throw new Error('拼接常量未在 NAME_MAP 登记: ' + part);
+  }
+  if (c.parts.includes('BASE_PROMPT') === false) throw new Error(c.name + ' 必须以 BASE_PROMPT 起头（D15）');
+}
+if (Object.values(MODE_TEMPLATE).includes('BASE_PROMPT')) {
+  throw new Error('_shared/base.md 不得单独作为档位提示词注入（D15）');
+}
+for (const mode of Object.keys(MODE_TEMPLATE)) {
+  if (!NAME_MAP[mode + '/system.md']) throw new Error('档位缺 system.md 映射: ' + mode);
+}
 
 // 自动发现：扫描技能包内全部 .md（排除 SKILL.md），按相对路径查 NAME_MAP 得常量名；
 // 缺失映射直接报错（新增技能文件必须登记），保序按 NAME_MAP 声明顺序。
@@ -97,7 +124,7 @@ function tryJson(v) {
 }
 
 // 生成 SKILL_MANIFEST（templates 直接引用同作用域常量）与 SKILL_RETRIEVE_BUDGETS
-// （v4.0.0：全局记忆链预算档位 4000/8000/16000，不再是按模式检索预算表）
+// （v4.1：全局记忆链预算档位 8000/16000/32000，不再是按模式检索预算表）
 function buildSkillManifest() {
   const pkg = parseFrontmatter(SKILL_ROOT + '/SKILL.md') || {};
   const modes = Array.isArray(pkg.modes) ? pkg.modes : [];
@@ -106,8 +133,9 @@ function buildSkillManifest() {
   for (const mode of modes) {
     const fm = parseFrontmatter(SKILL_ROOT + '/' + mode + '/SKILL.md');
     if (!fm) throw new Error(mode + '/SKILL.md 缺 frontmatter');
-    // v4.0.0：T2 增量轴废除，每档仅 t1
-    const t1 = NAME_MAP[mode + '/system.md'];
+    // v4.1：档位模板取 MODE_TEMPLATE（standard/expert 为 BASE+增量 的拼接常量），base 不得单独成档
+    const t1 = MODE_TEMPLATE[mode];
+    if (!t1) throw new Error(mode + ' 未在 MODE_TEMPLATE 登记');
     lines.push('  ' + JSON.stringify(mode) + ': { name: ' + JSON.stringify(fm.name || 'enhance-' + mode) +
       ', mode: ' + JSON.stringify(mode) +
       ', templates: { t1: ' + t1 + ' }' +
@@ -144,6 +172,11 @@ function buildSection() {
     const elems = linesToArray(lines);
     const body = elems.map((e) => '  ' + (e === '' ? "''" : "'" + e + "'")).join(',\n');
     blocks.push('const ' + src.name + ' = [\n' + body + ',\n].join(\'\\n\');');
+  }
+  // v4.1（D15）：拼接常量在部件之后声明；用字符串相加而非数组，避免与「md 数组常量」
+  // 的提取约定（const X = [ … ].join('\n')）混淆
+  for (const c of COMPOSED) {
+    blocks.push('const ' + c.name + ' = ' + c.parts.join(" + '\\n\\n' + ") + ';');
   }
   blocks.push(buildSkillManifest());
   return blocks.join('\n\n');

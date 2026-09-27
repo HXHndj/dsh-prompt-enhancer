@@ -80,3 +80,65 @@ test('CFG-P09 config/set merge 行为：传单键保留其他键（模拟两写�
   assert.equal(merged.futureKey.enabled, true, 'futureKey 未写入');
   rmSync(dir, { recursive: true, force: true });
 });
+
+// ---- v4.1（D3/§1）：client 侧预算三档改档（8000/16000/32000）与配置迁移契约 ----
+// state.js 是 client 配置迁移的唯一实现（sanitizeV2）；其自由变量来自 constants.js 同域常量
+//（构建注入序 constants → state，见 scripts/build-client.mjs），故两 chunk 拼接求值。
+// timerSvc 桩不执行回调：state.js 装载时会 syncConfigFromHost，无 host 时走重试定时器——
+// 桩掉可避免真实 setTimeout 把测试进程拖住（并避免触碰真实 localStorage）。
+function loadClientConfigModule() {
+  const decodeChunk = (rel) => {
+    const raw = readFileSync(join(__dirname, '..', rel), 'utf8');
+    const m = raw.match(/module\.exports\s*=\s*"([\s\S]*)";?\s*\n$/);
+    if (!m) throw new Error('chunk wrapper mismatch: ' + rel);
+    return JSON.parse('"' + m[1] + '"');
+  };
+  const constants = decodeChunk('src/client/constants.js');
+  const state = decodeChunk('src/client/state.js');
+  const backing = new Map();
+  const localStorageStub = {
+    getItem: (k) => (backing.has(k) ? backing.get(k) : null),
+    setItem: (k, v) => backing.set(k, String(v)),
+    removeItem: (k) => backing.delete(k),
+  };
+  const timerStub = { timeout: () => {}, interval: () => () => {} };
+  const factory = new Function(
+    'host', 'localStorage', 'timerSvc', 'setTimeout',
+    constants + '\n' + state
+      + '\n;return { sanitizeV2, cloneDefaults, configState, CONFIG_DEFAULTS, BUDGET_OPTIONS, MEMORY_ROUNDS_MAX, MEMORY_KEY_PREFIX };'
+  );
+  const api = factory(undefined, localStorageStub, timerStub, () => {});
+  return { ...api, constantsSrc: constants, stateSrc: state };
+}
+
+test('CFG-P10 v4.1 预算三档常量：BUDGET_OPTIONS=[8000,16000,32000]、默认 8000、MEMORY_ROUNDS_MAX=3', () => {
+  const m = loadClientConfigModule();
+  assert.deepEqual(m.BUDGET_OPTIONS, [8000, 16000, 32000], '§1/D3：预算三档 = 8000/16000/32000（与 host pure.js 一致）');
+  assert.equal(m.CONFIG_DEFAULTS.context.budgetChars, 8000, '§1：默认预算 8000');
+  assert.equal(m.cloneDefaults().context.budgetChars, 8000, 'cloneDefaults（首装/恢复默认）默认档 8000');
+  assert.equal(m.MEMORY_ROUNDS_MAX, 3, '§1/D4：记忆最多三轮（原 4）');
+  assert.equal(m.MEMORY_KEY_PREFIX, 'dsh-enh-memory:', '§2.3：记忆链持久化键前缀');
+});
+
+test('CFG-P11 v4.1 预算迁移矩阵：8000/16000/32000 原样保留；0/2000/4000/非法/缺省 → 8000', () => {
+  const { sanitizeV2 } = loadClientConfigModule();
+  const at = (v) => sanitizeV2({ context: { budgetChars: v } }).context.budgetChars;
+  assert.equal(at(8000), 8000, '8000 → 8000');
+  assert.equal(at(16000), 16000, '16000 → 16000');
+  assert.equal(at(32000), 32000, '★ 32000 → 32000（现为合法档位，不得再降级为 16000）');
+  assert.equal(at(0), 8000, '旧 0 档 → 8000（预算恒 >0）');
+  assert.equal(at(2000), 8000, '旧 2000 档 → 8000');
+  assert.equal(at(4000), 8000, '旧默认 4000 → 8000');
+  assert.equal(at(999), 8000, '非法值 → 8000');
+  assert.equal(at(undefined), 8000, '缺省 → 8000');
+  assert.equal(sanitizeV2({}).context.budgetChars, 8000, '无 context 字段 → 8000');
+  assert.equal(sanitizeV2({ context: {} }).context.budgetChars, 8000, 'context 无 budgetChars → 8000');
+});
+
+test('CFG-P12 v4.1 迁移源码标记：v4.0.0「32000→16000」降级映射必须删除（缺陷防回归）', () => {
+  const { stateSrc } = loadClientConfigModule();
+  assert.equal(stateSrc.includes('ctxCfg.budgetChars === 32000'), false, '32000→16000 降级映射复活了（§1 明令删除）');
+  assert.equal(stateSrc.includes('v.context.budgetChars = 4000'), false, '旧默认 4000 不得再作为迁移目标');
+  assert.ok(stateSrc.includes('else v.context.budgetChars = 8000;'), '白名单外（旧 0/2000/4000/非法/缺省）必须统一落 8000');
+  assert.ok(stateSrc.includes('context: { budgetChars: 8000 }'), 'cloneDefaults 默认档必须为 8000');
+});
