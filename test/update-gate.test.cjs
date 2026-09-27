@@ -419,3 +419,21 @@ test('UGATE-30 dshErrLogTail 降噪+根因优先：噪声尾不再挤掉真根�
   assert.ok(r5.split('\n').length <= 2, 'maxLines=2 时不得超过 2 行');
   assert.ok(r5.includes('Error:'), 'maxLines 收窄后仍以根因行起头');
 });
+
+// ---------- 发布脚本契约（v4.2.1 修复·4.1.0 起 package-lock 漂移的回归守卫） ----------
+test('REL-01 发布脚本 bump: package.json 与 package-lock.json 必须同步且回读校验（漂移回归守卫）', () => {
+  // 背景：scripts/release.mjs 曾只写 package.json —— lock 自 v4.1.0 起一直停在 4.0.1（4.1.1 手工订正、
+  // 4.2.0 再次手工同步才彻底暴露）；npm pack 产物里两个文件版本互相矛盾，破坏「版本单一事实源」。
+  const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'release.mjs'), 'utf8');
+  assert.ok(src.includes("const LOCK = join(root, 'package-lock.json')"), 'release.mjs 必须解析 package-lock 路径');
+  assert.ok(src.includes('lock.version = next'), '必须同步 lock 根 version');
+  assert.ok(src.includes("lock.packages[''].version = next"), '必须同步 lock packages[""].version');
+  assert.ok(src.includes('const lockBack = JSON.parse(readFileSync(LOCK'), '必须回读校验（不能「写了就算」）');
+  assert.ok(/lockRoot !== next[\s\S]{0,240}process\.exit\(1\)/.test(src), '回读不一致必须中止发布');
+  assert.ok(src.indexOf('lock.version = next') < src.indexOf("console.log('== npm pack ==')"), 'lock 同步必须早于 npm pack（否则 tgz 内两文件版本不一致）');
+  // 当前仓库自身不得已漂移：package.json 与 package-lock.json（根 + packages[""]）必须同版本
+  const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
+  const lock = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package-lock.json'), 'utf8'));
+  assert.equal(lock.version, pkg.version, 'package-lock.json 根 version 必须与 package.json 一致');
+  assert.equal(lock.packages[''].version, pkg.version, 'package-lock.json packages[""].version 必须与 package.json 一致');
+});

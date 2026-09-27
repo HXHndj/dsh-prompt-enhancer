@@ -27,6 +27,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **副键图标重设计：撤回优化改「回勾箭头」（开口曲线），与重新优化的 ⟳ 在剪影层面区分** `flow:enhance-ui`：用户反馈两枚图标「形态过于相似」——原实现用字体里的 ↺（撤回）/ ⟳（重新），同属**闭合圆环箭头**家族，14px 实尺下轮廓几乎一致。按用户拍板**只改撤回侧**（重新侧保持 ⟳ 字形不动，零回归面）：撤回改为内联 SVG「回勾箭头」（↩ 形：左向箭头 `M5.6 4.4L2.4 7.6L5.6 10.8` + 向右下弧尾 `M2.4 7.6H9.2C11.7 7.6 13.6 9.5 13.6 12`），规格对齐官方 DSH 图标（`viewBox 0 0 16 16` / 1px 描边 / `currentColor` / round 端点与连接）；新增 `data-glyph="undo|redo"` 语义钩子（测试与样式不再依赖字形文本）；容器改 `inline-flex` 居中并补 `.dsh-enh-aux-icon svg` 盒规则（字形与 SVG 两种内容共存）。**已实测**：`client-enhance-flow` **74/74**（新增 **V42-39** 图标契约：重新侧零 SVG 且仍是 ⟳ 字形、撤回侧恰一枚 SVG 且两条路径逐字锁定、开口曲线无闭合子路径）；全量 `npm test` **272/272/0**；`npm run gate` **通过 30 · 冲突 0**；`build-host --check` / `build-client --check` 双 OK；**隔离实例实机**：未改态副键实测 `data-glyph=redo` + 文本 `⟳` + 零 SVG（title「从零重新优化：本次不带记忆上下文（类似新开对话）」）、已改态实测 `data-glyph=undo` + 零文本 + SVG（两条回勾路径 / `viewBox 0 0 16 16` / `stroke-width=1`，title「撤销优化：恢复本轮优化前的草稿」），4× 放大截图 `shots/ui421-1-redo-glyph.png` / `shots/ui421-2-undo-hook.png`（全宽 `ui421-3/4`）。
+
 ## [4.2.0] - 2026-09-27
 
 双键按钮状态机（从零重新优化 + 撤销放开）+ 小三角箭头方向切换动画。决策与接口契约：`docs/plan-v4.2-decisions.md`（含独立验证反例 D-1/D-2/S20 的裁定与 r2/r3 修订）；**纯客户端改动**，RPC 面 24 条不变、配置 schema 与记忆链结构零改动。
@@ -70,6 +74,8 @@ v4.0.x 后四批用户决策的整体落地（决策记录：`docs/plan-v4.1-dec
 
 - **发布脚本二进制资产上传：tgz 被 JSON 化截断后仍报「发布成功」**（v4.0.1 发布当场命中；线上产物已重传修复）：`scripts/release.mjs` 的 `http()` 把非字符串请求体一律 `JSON.stringify`——tgz（Buffer）被写成 JSON 文本再按 content-length 截断，GitHub 仍 201，发布了损坏资产。修复：Buffer/string 原样写，仅对象 JSON 化；加固：sha256 提前计算，上传后按 API 资产 `digest` + 字节数自校验，不一致 `exit 1`。**已实测**：修好后实测上传 64KiB 随机二进制 → 201 且 digest 一致；v4.0.1 线上资产重传复验逐字节一致。
 - **澄清信号解析两处硬伤（v4.1）**：原始输出**先出现的普通代码围栏**会把真正的澄清 JSON 吞掉（围栏正则命中第一个）；JSON 后带含 `}` 尾注使 `lastIndexOf('}')` 截断解析失败。改花括号配对扫描逐对象尝试；疑似澄清信号解析失败先整请求重试一次，仍失败报 `CLARIFY_MALFORMED`（草稿保持原样，**裸 JSON 绝不当终稿**）。**已实测**：parseClarify 容错矩阵 23 例（围栏前置/尾注/半截 JSON/无 clarify 键等）。
+
+- **发布脚本 bump 版本未同步 `package-lock.json`**（4.1.0 发布即命中·**归位记录**）：`scripts/release.mjs` 的 bump 只写 `package.json`，lock 自本次发布起一直停在 `4.0.1`（4.1.1 手工订正、4.2.0 再次手工同步才彻底暴露），`npm pack` 产物里两个文件版本互相矛盾，破坏「版本单一事实源」。修复：bump 时同步写根 `version` 与 `packages[""].version`，并**回读校验**，不一致直接中止发布（宁可不发，也不产出双版本产物）——该脚本改动自下一次发布起生效。**已实测**：临时副本内把 lock 人为回退到 `4.0.1` 后跑真实 `release.mjs --version 4.9.9` → 输出「package-lock.json 已同步为 4.9.9（根 + packages[""]，回读校验通过）」，收尾核对 `package.json=4.9.9 / lock.root=4.9.9 / lock.packages[""]=4.9.9`；并新增 `update-gate` 的 **REL-01** 契约用例（源码锚：双文件写入 + 回读不一致即 `process.exit(1)` + 「lock 同步早于 npm pack」+ 当下仓库两文件版本必须一致）。
 
 ## [4.0.1] - 2026-09-27
 

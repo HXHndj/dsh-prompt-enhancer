@@ -108,6 +108,24 @@ if (dryRun) {
 const pkg = JSON.parse(readFileSync(PKG, 'utf8'));
 pkg.version = next;
 writeFileSync(PKG, JSON.stringify(pkg, null, 2) + '\n', 'utf8');
+// v4.2.1 修复（4.1.0 发布即命中的缺陷·本轮按用户要求归位记录）：bump 此前只写 package.json，
+// package-lock.json 不同步 —— lock 自 v4.1.0 起一直停在 4.0.1（4.1.1 靠手工订正、4.2.0 再次手工
+// 同步才彻底暴露），且 npm pack 产物里一个文件说 4.1.0、另一个说 4.0.1，给「版本单一事实源」留下
+// 第二个说谎的文件。现在：同步写根 version 与 packages[""].version，**写完立即回读校验**，不一致
+// 直接中止发布（宁可不发，也不产出双版本产物）。
+const LOCK = join(root, 'package-lock.json');
+const lock = JSON.parse(readFileSync(LOCK, 'utf8'));
+lock.version = next;
+if (lock.packages && lock.packages['']) lock.packages[''].version = next;
+writeFileSync(LOCK, JSON.stringify(lock, null, 2) + '\n', 'utf8');
+const lockBack = JSON.parse(readFileSync(LOCK, 'utf8'));
+const lockRoot = lockBack.version;
+const lockPkg = lockBack.packages && lockBack.packages[''] ? lockBack.packages[''].version : null;
+if (lockRoot !== next || (lockPkg !== null && lockPkg !== next)) {
+  console.error('package-lock.json 版本同步失败（期望 ' + next + '，实得根=' + lockRoot + ' packages[""]=' + lockPkg + '），中止发布');
+  process.exit(1);
+}
+console.log('package-lock.json 已同步为 ' + next + '（根 + packages[""]，回读校验通过）');
 runNode('build-host.mjs', []); // 产物同步注入新版本
 runNode('build-client.mjs', []);
 console.log('== npm pack ==');

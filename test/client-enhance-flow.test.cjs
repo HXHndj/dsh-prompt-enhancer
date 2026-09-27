@@ -1478,10 +1478,16 @@ const splitOf = (el) => collectEls(el, (x) => hasClass(x, 'dsh-enh-split'))[0];
 const mainBtnOf = (el) => collectEls(el, (x) => x.type === 'button' && x.props['aria-label'] === 'enhanceButton')[0];
 const auxBtnOf = (el) => collectEls(el, (x) => hasClass(x, 'dsh-enh-aux'))[0];
 const classEl = (el, cls) => collectEls(el, (x) => hasClass(x, cls))[0];
+// v4.2.1（用户拍板·图标重设计·方案 D 撤回侧）：撤回图标由字体字形改为**内联 SVG 回勾箭头**（开口曲线，
+// 与 ⟳ 的闭合圆环在剪影上区分），重新侧保持 ⟳ 字形不变。字形断言统一走语义符号：
+//   redo（从零重新优化）= 仍是文本 '⟳'；undo（撤回优化）= SVG ⇒ 记作 '↩'。
+// 两侧的**结构差异**由 V42-39 单独锁死（不许两侧都退化成字形、或都退化成同一 SVG）。
 const auxGlyphOf = (el) => {
   const a = auxBtnOf(el);
   const icon = a ? classEl(a, 'dsh-enh-aux-icon') : null;
-  return icon ? textOf(icon) : null;
+  if (!icon) return null;
+  if (collectEls(icon, (x) => x.type === 'svg').length > 0) return '↩';
+  return textOf(icon);
 };
 const sentEnhances = (h) => h.hostStub.calls.filter((c) => c.method === 'enhance');
 const lastEnhanceArgs = (h) => {
@@ -1590,7 +1596,7 @@ test('V42-04 双键状态机·已改 + 记忆开: 主=继续优化（普通 enha
   assert.equal(main.props.title, 'titleContinue');
   assert.equal(main.props.disabled, false);
   assert.equal(hasClass(main, 'dsh-enh-btn-result'), false, '继续优化不得带撤销态类名');
-  assert.equal(auxGlyphOf(el), '↺', '已改态副键字形 = ↺（撤销优化）');
+  assert.equal(auxGlyphOf(el), '↩', '已改态副键字形 = ↩（回勾箭头）');
   assert.equal(auxBtnOf(el).props.title, 'auxUndo');
   assert.equal(auxBtnOf(el).props['aria-label'], 'auxUndo');
   // 改回原样（逐字节一致）→ 回撤销 + ⟳
@@ -1603,7 +1609,7 @@ test('V42-04 双键状态机·已改 + 记忆开: 主=继续优化（普通 enha
   el = b.render('/deploy OUTC', 'plain');
   assert.equal(collectText(mainBtnOf(el)).join(''), 'result', '斜杠命令按正文对比（前缀不参与判定）');
   assert.equal(auxGlyphOf(el), '⟳');
-  // 副键 ↺ = undo（不带 fresh）
+  // 副键 ↩（回勾箭头）= undo（不带 fresh）
   el = b.render('OUTC 改', 'plain');
   auxBtnOf(el).props.onClick();
   await flush();
@@ -1648,9 +1654,9 @@ test('V42-05 双键状态机·已改 + 记忆关: 主=重新优化（fresh，第
   assert.equal(main.props.title, 'titleRedo');
   assert.equal(main.props.disabled, false);
   assert.equal(hasClass(main, 'dsh-enh-btn-result'), false, '重新优化不是撤销态');
-  assert.equal(auxGlyphOf(el), '↺');
+  assert.equal(auxGlyphOf(el), '↩');
   assert.equal(auxBtnOf(el).props.title, 'auxUndo');
-  // 副键 ↺ = undo
+  // 副键 ↩（回勾箭头）= undo
   auxBtnOf(el).props.onClick();
   await flush();
   assert.equal(b.calls[0].fn, 'undo', '§3.2：已改态副键 = undo（记忆关亦然）');
@@ -1684,7 +1690,7 @@ test('V42-06 双键状态机·改回原样: 修改 → 继续优化（↺）；�
   const b = loadButtonSpy(h, sid);
   let el = b.render('O6 改', 'plain');
   assert.equal(collectText(mainBtnOf(el)).join(''), 'btnContinue');
-  assert.equal(auxGlyphOf(el), '↺');
+  assert.equal(auxGlyphOf(el), '↩');
   el = b.render('O6 改后还原但仍不同', 'plain');
   assert.equal(collectText(mainBtnOf(el)).join(''), 'btnContinue', '仍不相等 → 继续优化');
   el = b.render('O6', 'plain');
@@ -1712,11 +1718,11 @@ test('V42-07 双键状态机·保底与隐藏: L === null 按「已改」处理�
   // 记忆开：按「已改」→ 主键继续优化 + 副键 ↺
   let el = run('standard', true);
   assert.equal(collectText(mainBtnOf(el)).join(''), 'btnContinue', '§一：L === null 按「已改」处理（保底，实际不可达）');
-  assert.equal(auxGlyphOf(el), '↺', '已改 → 副键 ↺（撤销）');
+  assert.equal(auxGlyphOf(el), '↩', '已改 → 副键 ↩（回勾箭头）');
   // 记忆关：按「已改」→ 主键重新优化 + 副键 ↺
   el = run('standard', false);
   assert.equal(collectText(mainBtnOf(el)).join(''), 'btnRedo', 'L === null + 记忆关 → 重新优化（fresh）');
-  assert.equal(auxGlyphOf(el), '↺');
+  assert.equal(auxGlyphOf(el), '↩');
   // enhancing 态（optimized 仍为 true，如从零重跑在途）：副键必须隐藏，主键 = 既有 busy 产物
   const h3 = loadHelpers({ memory: true, mode: 'standard' });
   const sid3 = 'sess-v42-busy';
@@ -1763,7 +1769,7 @@ test('V42-10 无链回退（重写 V4·无链）: 记忆关 lite/standard 链空
     assert.equal(auxGlyphOf(el), '⟳');
     el = b.render('/go OUT2 改', 'plain');
     assert.equal(collectText(mainBtnOf(el)).join(''), 'btnRedo', mode + '：无链 + 已改 + 记忆关 → 重新优化');
-    assert.equal(auxGlyphOf(el), '↺', mode + '：已改 → 副键 ↺');
+    assert.equal(auxGlyphOf(el), '↩', mode + '：已改 → 副键 ↩');
   }
 });
 
@@ -1969,8 +1975,8 @@ test('V42-37 判据同源（r3 逐态绝对期望）: 主键产物 + 副键字�
     { name: 'D-2-输出自带命令前缀', memory: true, phase: 'idle', backup: 'c', enhanced: '/deploy O', rounds: [['c', '/deploy O']], draft: '/deploy O', title: 'titleResult', glyph: '⟳' },
     // §1.1① 回退分支：enhanced === '' + 链非空 ⇒ L 取链末 output（草稿 = 该 output ⇒ 未改）
     { name: '回退分支-链非空-enhanced空', memory: true, phase: 'idle', backup: '', enhanced: '', rounds: [['d', 'O']], draft: 'O', title: 'titleResult', glyph: '⟳' },
-    { name: 'idle-已改-记忆开', memory: true, phase: 'idle', backup: 'd', enhanced: 'O', rounds: [['d', 'O']], draft: 'O 改', title: 'titleContinue', glyph: '↺' },
-    { name: 'idle-已改-记忆关', memory: false, phase: 'idle', backup: 'd', enhanced: 'O', rounds: [], draft: 'O 改', title: 'titleRedo', glyph: '↺' },
+    { name: 'idle-已改-记忆开', memory: true, phase: 'idle', backup: 'd', enhanced: 'O', rounds: [['d', 'O']], draft: 'O 改', title: 'titleContinue', glyph: '↩' },
+    { name: 'idle-已改-记忆关', memory: false, phase: 'idle', backup: 'd', enhanced: 'O', rounds: [], draft: 'O 改', title: 'titleRedo', glyph: '↩' },
   ];
   for (const c of cases) {
     const h = loadHelpers({ memory: c.memory, mode: 'standard' });
@@ -2080,6 +2086,58 @@ test('V42-38 r3 反例 S20·pop 身份判据: 文本巧合不得误弹链；链�
   assert.deepEqual(w4, ['/deploy d'], '③b 斜杠形态回退 backup（前缀保留）');
   assert.deepEqual(s4.memoryRounds, [], '③b splitCommand 两侧对齐 ⇒ pop（D-2 形态兼容）');
   assert.equal(h4.lsBacking.has(MK(sid4)), false, '③b pop 后删键');
+});
+
+test('V42-39 图标契约（v4.2.1 用户拍板）: 撤回 = 自绘回勾箭头 SVG（开口曲线）；重新 = 保持 ⟳ 字形', () => {
+  // 用户反馈「两枚图标形态过于相似」→ 只改撤回侧（方案 D 的撤回几何）；重新侧按用户要求**保持不变**。
+  const h = loadHelpers({ memory: true, mode: 'standard' });
+  const sid = 'sess-v42-icons';
+  const b = loadButtonSpy(h, sid);
+  const s = h.api.storeFor(sid);
+  s.optimized = true;
+  s.phase = 'result';
+  s.backup = 'd';
+  s.enhanced = 'O';
+  s.memoryRounds = [{ input: 'd', output: 'O' }];
+
+  // ① 未改（撤销行）⇒ 副键 = 从零重新优化：保持 ⟳ 字形（零改动、零回归面）
+  const redoBtn = auxBtnOf(b.render('O', 'plain'));
+  assert.equal(redoBtn.props['data-glyph'], 'redo', 'data-glyph 语义钩子 = redo');
+  const redoIcon = classEl(redoBtn, 'dsh-enh-aux-icon');
+  assert.equal(collectEls(redoIcon, (x) => x.type === 'svg').length, 0, '重新侧不得改成 SVG（用户要求保持不变）');
+  assert.equal(textOf(redoIcon), '⟳', '重新侧仍是 ⟳ 字形');
+
+  // ② 已改 ⇒ 副键 = 撤回优化：内联 SVG 回勾箭头（官方规格：16×16 网格 / 1px 描边 / currentColor / round 端点）
+  // 注意：§1.1② 的承重析取项使 result 态恒为「撤销行」（副键 = redo），故撤回态必须落在 idle（结果已被编辑消费）
+  s.phase = 'idle';
+  s.enhanced = '';
+  const undoBtn = auxBtnOf(b.render('O 改', 'plain'));
+  assert.equal(undoBtn.props['data-glyph'], 'undo', 'data-glyph 语义钩子 = undo');
+  const undoIcon = classEl(undoBtn, 'dsh-enh-aux-icon');
+  const svg = collectEls(undoIcon, (x) => x.type === 'svg')[0];
+  assert.ok(svg, '撤回侧必须是内联 SVG（不再是字体字形）');
+  assert.equal(svg.props.viewBox, '0 0 16 16', '与官方 DSH 图标同网格');
+  assert.equal(svg.props.strokeWidth, 1, '1px 描边（官方规格）');
+  assert.equal(svg.props.width, 14);
+  assert.equal(svg.props.height, 14);
+  assert.equal(textOf(undoIcon), '', '撤回侧不得再输出 ↺ 字形（否则与 ⟳ 又同属闭合圆环家族）');
+
+  // ③ 几何逐字锁定：左向箭头 + 向右下弧尾
+  const paths = collectEls(svg, (x) => x.type === 'path').map((p) => p.props.d);
+  assert.deepEqual(paths, ['M5.6 4.4L2.4 7.6L5.6 10.8', 'M2.4 7.6H9.2C11.7 7.6 13.6 9.5 13.6 12'], '回勾箭头几何逐字锁定');
+  assert.equal(paths.some((d) => /[Zz]/.test(d)), false, '回勾箭头必须是开口曲线（不得出现闭合子路径）');
+  assert.ok(paths.every((d) => /^M/.test(d) && d.includes('stroke') === false), '两条子路径均自 M 起笔');
+
+  // ④ 形态区分度（本用例的目的）：撤回 = 开口 SVG 曲线；重新 = 闭合圆环字形 ⇒ 结构层面不可混淆
+  assert.equal(collectEls(undoIcon, (x) => x.type === 'svg').length, 1, '撤回侧恰一枚 SVG');
+  assert.equal(collectEls(redoIcon, (x) => x.type === 'svg').length, 0, '重新侧零 SVG（保持字形）');
+  assert.equal(auxGlyphOf(b.render('O', 'plain')), '⟳', '重新侧语义符号 = ⟳');
+  assert.equal(auxGlyphOf(b.render('O 改', 'plain')), '↩', '撤回侧语义符号 = ↩（SVG 回勾箭头）');
+
+  // ⑤ 样式接线：字形与 SVG 两种内容共存所需的规则必须在位
+  const css = decodeChunk('src/client/styles.js');
+  assert.ok(css.includes('.dsh-enh-aux .dsh-enh-aux-icon{display:inline-flex'), '容器须居中（字形 + SVG 两种内容）');
+  assert.ok(css.includes('.dsh-enh-aux .dsh-enh-aux-icon svg{display:block;width:14px;height:14px}'), '缺副键 SVG 盒规则');
 });
 
 test('V42-41 result 消费 effect: 用户编辑草稿 ⇒ 消费为 idle + 清结果键；草稿 === backup ⇒ 重新应用结果', () => {
