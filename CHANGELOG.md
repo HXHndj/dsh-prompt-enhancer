@@ -1,7 +1,8 @@
 # Changelog
 
 [3.3.3]: https://github.com/Fishsb/dsh-prompt-enhancer/compare/v3.3.2...v3.3.3
-[Unreleased]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v4.2.4...HEAD
+[Unreleased]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v4.2.5...HEAD
+[4.2.5]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v4.2.4...v4.2.5
 [4.2.4]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v4.2.3...v4.2.4
 [4.2.3]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v4.2.2...v4.2.3
 [4.2.2]: https://github.com/HXHndj/dsh-prompt-enhancer/compare/v4.2.1...v4.2.2
@@ -30,6 +31,33 @@
 > 🗺️ 条目内的 `flow:` 标注为功能链路标签（原 pmg 项目地图 `docs/map/` 已随 pmg 于 2026-09-10 移除，该路径不再存在）；agent 开工前先读 [`AGENTS.md`](AGENTS.md)。
 
 ## [Unreleased]
+
+## [4.2.5] - 2026-09-28
+
+> DSH 0.2.0-rc.1 兼容性适配轮：**仅清单声明层**（`package.json` + 文档 + 一条新契约测试），`src/**`、`lib/**`、`lib/client.cjs`、槽位名、RPC 面与全部客户端组件**零改动**。完整取证（门禁源码、客户端契约逐项核对、生态对照）见 [docs/migration-dsh-0.2.0-rc1-report.md](docs/migration-dsh-0.2.0-rc1-report.md)。
+
+### Fixed
+
+- **升级到 DSH 0.2.0-rc.1 后插件被判「异常」并拒绝加载（✨ 与设置页都不出现）** `flow:platform-compat`：根因是 `peerDependencies` 的两条 `^0.1.0-rc.6`。0.2.0-rc.1 的 profile 启动门禁（`@deepseek-ai/dsh-app-boot` 的 `evaluatePluginCompatibility`）**只读** `peerDependencies`，把每个 `@deepseek-ai/dsh` / `@deepseek-ai/dsh-*` 的范围与**运行时版本**比对 `semver.satisfies(runtimeVersion, range, { includePrerelease: true })`（运行时版本 = 该包自身 `package.json` 的 `version` = `0.2.0-rc.1`；**不按依赖名查表**，不读 `engines.dsh`，不读 `dsh.client.inject`）；`^0.1.0-rc.6` 在 0.x 上等价 `>=0.1.0-rc.6 <0.2.0` ⇒ **任一条不满足即整包被拒**（CLI 原文：`... profile startup denies it until you grant an exemption ...`）。修法：两条 dsh 系 peer 改**双侧窗口** `>=0.1.5-rc.1 <0.3.0-0`——`0.1.7-rc.2`（旧桌面线）与 `0.2.0-rc.1`（当前）在 `includePrerelease: true` 下均满足；上限用 `-0` 而非 `<0.3.0`，因为 DSH 主要走 `-rc` 发布，裸 `<0.3.0` 会让未来的 `0.3.0-rc.1` **静默放行**（`0.3.0-rc.1 < 0.3.0` 成立），与「跨 minor 必须显式复核」的初衷相悖。
+- **`dsh.client.inject` 引用了 0.2 线已淘汰的 `@deepseek-ai/dsh-client-runtime`** `flow:platform-compat`：该包 npm 最后发布 `0.1.1-rc.2`，0.2.0-rc.1 的客户端启动图与 `app.asar` 内均无它（职责拆分到 `dsh-client-ui-slots` / `dsh-client-store` / `dsh-client-ui-renderer`）。inject 本身**无阻断能力**（未命中的名字在浏览器侧被静默跳过 `if (dependency !== void 0)`，宿主侧排序只用 `dsh.client.external`），但会误导维护者；且 `ctx.slots` 服务在 0.2 由 `@deepseek-ai/dsh-client-ui-renderer` 的 `SlotRegistry` 提供（0.1.x 才是 runtime）。改为 `["@deepseek-ai/dsh-client-ui-renderer", "@deepseek-ai/dsh-client-locale"]`。
+- **`docs/compatibility-matrix.md` §4.1 的机制描述与 0.2.0-rc.1 实现相反**：原文「宿主缺失 → `dsh.client.inject` 不满足 → client 半部不注入」。实测代码为「inject 未命中静默跳过、**无阻断能力**；阻断来自 `peerDependencies`」。该行连同**门禁口径**（只读 peer、与运行时版本比对、`engines.dsh`/`dsh.manifestVersion` 官方明示不强制、profile `compatibility.json` 精确豁免）一并更正——同一事故的第二份「说谎文档」。
+
+### Added
+
+- **`test/manifest-compat.test.cjs`：6 条 manifest 契约断言（零依赖，CI 无需装包）** `flow:platform-compat`：MCOMPAT-01 dsh 系 peer 禁 `^`/`~`（0.x 上会隐式排除下一个 minor——正是本次根因）；MCOMPAT-02 必须双侧窗口（`>=`+`<`）或 `workspace:` 形式；MCOMPAT-03 已淘汰包名在 `peerDependencies` 与 `dsh.client.inject` **双向禁入**；MCOMPAT-04 inject 形制 + `platform:web` + slots 提供者（renderer）与 locale 在位；MCOMPAT-05 `engines.dsh`（声明时）与 peer 窗口同源；MCOMPAT-06 版本与 peer 声明的单一事实源（`package.json` ↔ `package-lock.json` 根与 `packages[""]`）。已加入 `scripts.test`（CI 按该字段逐文件跑）。
+- **可选 `engines.dsh`（`>=0.1.5-rc.1 <0.3.0-0`）**：与 peer 窗口同源，供读者与第三方工具识别支持面。**注意**：官方文档明示安装器/加载器**不强制**该字段——它不参与 0.2.0-rc.1 的放行判定，勿当门禁用。
+
+### Changed
+
+- **`package-lock.json` 随声明重解析**：根 `version` 4.2.5、`packages[""]` 的 `peerDependencies` 与新声明一致；旧 peer 树（`dsh-client-runtime` 及其传递依赖）已从 lock 移除（lock 由 2378 行的旧树收敛为 8 条：undici + 两个 peer 及其小树）。仓库代码与测试**不 require 任何 `@deepseek-ai/*` 包**（已核对），故构建/测试不受影响。
+- **README（中/英）与兼容性矩阵同步**：安装命令锁 `v4.2.5`；「输入框工具行（✨）客户端契约」段补「宿主版本边界」小节（peer 双侧窗口 + `ctx.slots` 提供者变更 + inject 不承担阻断）；§4 版本矩阵新增 4.2.5 行。
+
+### 已实测（v4.2.5）
+
+- **真门禁函数复算**（0.2.0-rc.1 内 `@deepseek-ai/dsh-app-boot` 的 `evaluatePluginCompatibility` **逐字切片**，运行时版本由该包 `package.json` 提供，切片 sha256 `49e37cf0…`）：**改前**清单 ⇒ `INCOMPATIBLE`，peers 失败项与用户截图一致（`^0.1.0-rc.6` ×2，且 `pluginCompatibilityWarning` 与 CLI 日志逐字一致）；**改后**清单 ⇒ `COMPATIBLE (undefined)`；强制 `0.1.7-rc.2` / `0.1.5-rc.1` / `0.2.1-rc.1` ⇒ COMPATIBLE（双线兼容与窗口内预发布成立）；强制 `0.3.0-rc.1` / `0.3.0` ⇒ INCOMPATIBLE（上限生效）。共 9 条断言全通过。
+- **npm 解析可行性**（CI `npm install` 与用户侧 pnpm 安装的真实前置）：`>=0.1.5-rc.1 <0.3.0-0` 在**严格 semver**（无 `includePrerelease`）下由已发布版本满足，`package-lock.json` 实际解析到 `@deepseek-ai/dsh-client-locale@0.1.5-rc.3` 与 `@deepseek-ai/dsh-client-ui-renderer@0.1.5-rc.3`；对照组（`>=9.0.0`）按预期 `ETARGET` 失败，证明该检查有效。
+- **全量 `npm test` 302 / 302 / 0 fail**（新增 MCOMPAT-01…06 共 6 条）；`npm run gate` **通过 30 · 冲突 0**（SKIP 3 为本地治理档/日志缺位，与本次改动无关）；`build-host --check` / `build-client --check` 双 OK（版本注入 **4.2.5**），`lib/client.cjs` 未变。
+- **DSH Desktop 0.2.0-rc.1 实机（用户执行安装并确认）**：本版改动装上后插件恢复正常——插件列表不再显示「异常」，用户回报「已完全适配 0.2.0-rc1」。**口径说明**：用户实装的那份 tgz 版本标签为 `4.3.0`（发布前按用户拍板改号），发布版 `4.2.5` 与之**内容相同、仅版本号不同**——本版只动清单声明，门禁实际读取的三项（peer 范围 / `dsh.client.inject` / `engines.dsh`）逐字未变。
 
 ## [4.2.4] - 2026-09-27
 

@@ -1,6 +1,6 @@
 {
   "name": "dsh-prompt-enhancer",
-  "version": "4.2.4",
+  "version": "4.2.5",
   "description": "DeepSeek Harness (DSH) plugin: one-click prompt enhancement (✨) for the composer",
   "main": "lib/index.cjs",
   "type": "commonjs",
@@ -23,7 +23,7 @@
     "verify:enhance": "node scripts/enhance-verify.mjs",
     "build:client": "node scripts/build-client.mjs",
     "build": "node scripts/build-host.mjs && node scripts/build-client.mjs",
-    "test": "node --test test/client-enhance-flow.test.cjs test/lib.test.cjs test/sys.test.cjs test/maintain.test.cjs test/updater-host.test.cjs test/update-gate.test.cjs test/deploy-guard.test.cjs test/protocol.test.cjs test/observability.test.cjs test/bundle-smoke.test.cjs test/config-persist.test.cjs test/platform-service.test.cjs test/rpc-guard.test.cjs test/rpc-contract.test.cjs test/client-model-config.test.cjs"
+    "test": "node --test test/manifest-compat.test.cjs test/client-enhance-flow.test.cjs test/lib.test.cjs test/sys.test.cjs test/maintain.test.cjs test/updater-host.test.cjs test/update-gate.test.cjs test/deploy-guard.test.cjs test/protocol.test.cjs test/observability.test.cjs test/bundle-smoke.test.cjs test/config-persist.test.cjs test/platform-service.test.cjs test/rpc-guard.test.cjs test/rpc-contract.test.cjs test/client-model-config.test.cjs"
   },
   "dsh": {
     "bundle": {
@@ -31,15 +31,18 @@
     },
     "client": {
       "inject": [
-        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-renderer",
         "@deepseek-ai/dsh-client-locale"
       ],
       "platform": "web"
     }
   },
   "peerDependencies": {
-    "@deepseek-ai/dsh-client-locale": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-client-runtime": "^0.1.0-rc.6"
+    "@deepseek-ai/dsh-client-locale": ">=0.1.5-rc.1 <0.3.0-0",
+    "@deepseek-ai/dsh-client-ui-renderer": ">=0.1.5-rc.1 <0.3.0-0"
+  },
+  "engines": {
+    "dsh": ">=0.1.5-rc.1 <0.3.0-0"
   },
   "keywords": [
     "deepseek-harness",
