@@ -986,9 +986,13 @@ function validateConfig(raw) {
   }
   // v3.1.7（用户需求·参数无限制）：timeoutMs/maxTokens/outputLimit = 0 → 无限制
   // （不设超时 / provider 默认上限 / collectStream 不截断）；其余范围校验不变
-  if ((p.timeoutMs === 0) || (Number.isInteger(p.timeoutMs) && p.timeoutMs >= 1000 && p.timeoutMs <= 300000)) out.timeoutMs = p.timeoutMs;
-  if ((p.maxTokens === 0) || (Number.isInteger(p.maxTokens) && p.maxTokens >= 100 && p.maxTokens <= 16000)) out.maxTokens = p.maxTokens;
-  if ((p.outputLimit === 0) || (Number.isInteger(p.outputLimit) && p.outputLimit >= 500 && p.outputLimit <= 50000)) out.outputLimit = p.outputLimit;
+  // v4.3.0（用户拍板·运行参数一致性）：把「是否接受用户值」显式记下，供下方统一口径回退
+  const timeoutOk = (p.timeoutMs === 0) || (Number.isInteger(p.timeoutMs) && p.timeoutMs >= 1000 && p.timeoutMs <= 300000);
+  const maxTokensOk = (p.maxTokens === 0) || (Number.isInteger(p.maxTokens) && p.maxTokens >= 100 && p.maxTokens <= 16000);
+  const outputLimitOk = (p.outputLimit === 0) || (Number.isInteger(p.outputLimit) && p.outputLimit >= 500 && p.outputLimit <= 50000);
+  if (timeoutOk) out.timeoutMs = p.timeoutMs;
+  if (maxTokensOk) out.maxTokens = p.maxTokens;
+  if (outputLimitOk) out.outputLimit = p.outputLimit;
   // template 解析：v2 结构（template.mode/text/texts）与 v1 平铺（templateMode/templateText）双兼容。
   // v2.4.7 修复：此前只读 v1 平铺字段，v2 结构下自定义模板实际从未生效（templateMode 恒为缺省）。
   const templateMode = typeof t.templateMode === 'string' ? t.templateMode : t.mode;
@@ -1050,9 +1054,12 @@ function validateConfig(raw) {
   // v3.1.8（实测驱动·用户指令）→ v4.0.0：档位默认 params（超时 30/30/60s、Token 2000/2000/4000、
   // 输出上限 8000/8000/16000）——仅当用户未显式设置该项时生效；显式设置（含 0 无限制）优先。
   const pModeDefault = MODE_PARAMS_DEFAULT[out.mode] || MODE_PARAMS_DEFAULT[DEFAULT_MODE];
-  if (p.timeoutMs === undefined) out.timeoutMs = pModeDefault.timeoutMs;
-  if (p.maxTokens === undefined) out.maxTokens = pModeDefault.maxTokens;
-  if (p.outputLimit === undefined) out.outputLimit = pModeDefault.outputLimit;
+  // v4.3.0（用户拍板·运行参数一致性）：**非法值**（越界/非整数）与「未设置」同口径落**当前模式默认**。
+  // 原实现非法值落全局默认 30000/2000/8000——同一份越界配置在 expert 档会得到「30s」而缺省得到「60s」，
+  // 属静默口径分裂；现二者一致，且都等于设置页可见的档位默认值。
+  if (!timeoutOk) out.timeoutMs = pModeDefault.timeoutMs;
+  if (!maxTokensOk) out.maxTokens = pModeDefault.maxTokens;
+  if (!outputLimitOk) out.outputLimit = pModeDefault.outputLimit;
   const ctxCfg = src.context && typeof src.context === 'object' ? src.context : {};
   // v4.1（spec §1）：预算 = 全局三档 8000/16000/32000；旧值 0/2000/4000 与非法值 → 8000，
   // 32000 不再降级（v4.0.0 的「32000→16000」映射已删除）
@@ -1194,7 +1201,8 @@ function pickReachableIndex(entries, results) {
 // tps = token/极短时间 被数学放大（实测虚高到 4500 tok/s，真实量级 75–267）。
 // 现要求写长文，decode 窗口拉到秒级，tps 才有意义；探测默认不传 reasoningEffort
 // （未开思考，TTFT 不含思考时间、更贴近纯生成速度）。
-async function pingStream(llmService, entry, ref) {
+// v4.3.0（超时逻辑重构）：signal 可选——探测流同样受总预算约束（deadline abort 时立即中断探测）。
+async function pingStream(llmService, entry, ref, signal) {
   const startedAt = Date.now();
   let ttftMs = -1;
   let sawFirst = false;
@@ -1208,6 +1216,7 @@ async function pingStream(llmService, entry, ref) {
       provider: entry.provider,
       model: entry.model,
       ...(entry.reasoningEffort ? { reasoningEffort: entry.reasoningEffort } : {}),
+      ...(signal ? { signal } : {}),
       maxTokens: 1200,
       system: 'You are a connectivity probe. Write a continuous plain-paragraph essay of about 800 words on any topic. Do not use markdown, headings, lists or bullet points; just plain flowing text.',
       messages: [{
@@ -1356,9 +1365,9 @@ function estimateLiteModeSeconds(ttftMs, tokensPerSecond, inputChars) {
 // 方案「插件版本检测与一键更新方案.md」§1-§3：检测目标 / 版本比较 / 更新流程。
 // 本地版本单一事实源（发布时 bump；client 不另存副本，统一经 update/check 读取）
 // v3.2.1-t（架构调整·版本单一事实源）：PLUGIN_VERSION 由 build-host.mjs 从 package.json 构建注入
-// （'4.2.5' 占位符替换）——源码不再硬编码版本，杜绝「发版忘 bump → 检测永远旧版」漂移。
+// （'4.3.0' 占位符替换）——源码不再硬编码版本，杜绝「发版忘 bump → 检测永远旧版」漂移。
 // 测试/动态形态下占位符未替换 → typeof 未定义 → 回退 0.0.0（仅格式占位，构建产物始终为真实版本）。
-const PLUGIN_VERSION = typeof '4.2.5' !== 'undefined' ? '4.2.5' : '0.0.0';
+const PLUGIN_VERSION = typeof '4.3.0' !== 'undefined' ? '4.3.0' : '0.0.0';
 // 一键拉取的文件清单（发布仓库根目录，raw.githubusercontent.com 按 tag 拉取）
 const UPDATE_MANIFEST = ['plugin-host.js', 'README.md', 'README.en.md', 'cordis.patch.yml'];
 // update/check 结果缓存 TTL（未鉴权 GitHub API 限流 60 次/时）
@@ -1616,8 +1625,19 @@ return {
       const rec = pending.get(key);
       if (!rec) return;
       rec[flag] = true;
+      // v4.3.0（超时逻辑重构）：先掐 AbortSignal——真正中断在途请求（DSH llm 契约支持 options.signal）；
+      // iterator.return() 保留为兜底（它对「暂停在 await next() 上的 async generator」只会排队，
+      // 须等当前 await 结算才生效，故不能作为唯一通道）。
+      if (rec.aborter && typeof rec.aborter.abort === 'function') {
+        try { rec.aborter.abort(); } catch (e) { /* 忽略 */ }
+      }
       if (rec.iterator && typeof rec.iterator.return === 'function') {
         try { rec.iterator.return(); } catch (e) { /* 忽略 */ }
+      }
+      // v4.3.0（超时逻辑重构·硬返回）：唤醒 enhance 处理函数的 race——无论底层是否响应 abort，
+      // RPC 都必须在中止信号发出后立即结算（超时 → TIMEOUT，用户取消 → ABORTED）。
+      if (typeof rec.settleAbort === 'function') {
+        try { rec.settleAbort(); } catch (e) { /* 忽略 */ }
       }
     }
 
@@ -2284,10 +2304,11 @@ return {
       state.clarifyAnswers = clarifyAnswers;
       state.skipped = skipped;
       state.isContinuation = memoryActive && baseRounds.length > 0 && memDelta !== null && (memDelta.added.length > 0 || memDelta.removed.length > 0);
-      // v3.0p 审查（超时/耗时匹配）：链含 effort 时超时自动放宽 ≥120s——实测 effort=max 长草稿
-      // （1500 字）完整生成 42s > 默认 30s → 必超时；无 effort 行为不变
-      // v3.1.7（用户需求·超时无限制）：cfg.timeoutMs=0（无限制）不被 effort 放宽覆盖——保持 0 不挂超时
-      state.timeoutMs = cfg.timeoutMs > 0 ? (chain.some((e) => e && e.reasoningEffort) ? Math.max(cfg.timeoutMs, 120000) : cfg.timeoutMs) : 0;
+      // v4.3.0（2026-09-29 用户拍板·运行参数一致性）：**删除** v3.0p 的「链含 effort 时超时自动放宽 ≥120s」。
+      // 实测该放宽把用户设置的 30s 静默变成 120s——即用户现场「设 30s、跑过 30s 仍在运行」的直接根因。
+      // 现口径 = **严格照办**：设置值即实际下发值；需要更长超时的用户在设置页自行调大。
+      // 0 = 无限制：不挂超时表（enhance 主流程按 budget===0 处理），也不再被 effort 覆盖。
+      state.timeoutMs = cfg.timeoutMs;
       state.maxTokens = cfg.maxTokens;
       state.outputLimit = cfg.outputLimit;
       return state;
@@ -2378,7 +2399,9 @@ return {
           state.result = { ok: false, code: rec.timedOut ? 'TIMEOUT' : 'ABORTED', message: friendlyMessage({ code: rec.timedOut ? 'TIMEOUT' : 'ABORTED' }) };
           return state;
         }
-        hlog('[enhance] try session=' + sessionId + ' provider=' + entry.provider + ' model=' + entry.model + (entry.reasoningEffort ? ' effort=' + entry.reasoningEffort : '') + ' seq=' + seq);
+        // v4.3.0（排障口径修复）：本行改为打印**实际下发值**——旧实现只打印用户配置值，
+        // 曾出现「日志说 maxTokens=2000、请求实际 8000」的误导（配合上面两处放宽的删除一并收口）。
+        hlog('[enhance] try session=' + sessionId + ' provider=' + entry.provider + ' model=' + entry.model + (entry.reasoningEffort ? ' effort=' + entry.reasoningEffort : '') + ' maxTokens=' + (maxTokens > 0 ? maxTokens : 'default') + ' timeout=' + state.timeoutMs + ' seq=' + seq);
         // v3.2.4（用户需求）：模型序号 = 用户设置（fallback 链）中的位置——buildTryChain
         // 会去重/过滤导致 chain 索引偏移；用 fallback 原始序号，设置里第 N 条就显示 N（自动随数量）
         const fb = state.cfg && Array.isArray(state.cfg.fallback) ? state.cfg.fallback : [];
@@ -2399,14 +2422,19 @@ return {
             ...(entry.reasoningEffort ? { reasoningEffort: entry.reasoningEffort } : {}),
             system,
             // maxTokens<=0 省略字段 → provider 默认上限（不设限制）
-            // v2.9.0-fix（实测确证）：reasoning 模式（带 effort）下思考过程消耗 maxTokens
-            // 预算——配置的 2000 在长输入 + effort=max 时耗尽 → 空流（EMPTY_RESPONSE）；
-            // 自动放宽到 >=8000（保守版，避免思考耗尽输出预算）
-            ...(entry.reasoningEffort ? { maxTokens: Math.max(maxTokens, 8000) } : (maxTokens > 0 ? { maxTokens } : {})),
+            // v4.3.0（用户拍板·运行参数一致性）：**删除** v2.9.0-fix 的「reasoning 链自动放宽 maxTokens ≥8000」
+            //（原由：思考过程消耗 maxTokens 预算，配置的 2000 在长输入 + effort=max 时耗尽 → 空流 EMPTY_RESPONSE）。
+            // 现口径 = **严格照办**：设置值即实际下发值；「思考吃预算」的兜底改为客户端在**开启思考等级那一刻**
+            // 可见地把建议值写进配置（state.js 的 REASONING_PARAM_FLOORS，用户可随时改回）。
+            ...(maxTokens > 0 ? { maxTokens } : {}),
             // v3.2.21（用户需求·优化结果稳定）：确定性重述任务压低 temperature——不传时用平台默认
             // （随机性高，同一输入每次结果不同）；reasoning 链节由 effort 控制，不传 temperature
             ...(entry.reasoningEffort ? {} : { temperature: 0.3 }),
             messages,
+            // v4.3.0（超时逻辑重构）：把 deadline/cancel 的 AbortSignal 透传给 DSH llm——
+            // 这是唯一能真正掐断在途 HTTP 请求的通道（iterator.return() 对「暂停在 await next() 上的
+            // async generator」只会排队：实测设 1000ms、首字 4000ms 才到时，4011ms 才结束）。
+            ...(state.signal ? { signal: state.signal } : {}),
           });
         } catch (e) {
           // v3.1.3（看门狗 + 延迟连通性预检）：llm.stream 同步抛错 = 模型不可达 → 记失败走下一条
@@ -2421,13 +2449,16 @@ return {
         // 重启不再挂看门狗，防「慢但健康」模型被反复打断成死循环）
         let watchTimer = null;
         let watchFired = false;
-        if (i === 0 && !state.watchdogDone) {
+        // v4.3.0（超时逻辑重构）：看门狗窗口同样受总预算约束——剩余预算不足时按剩余值收敛，
+        // 预算已耗尽则不再挂（交由 deadline 硬返回），避免 15s 看门狗把 30s 预算整段突破。
+        const watchBudget = state.remaining ? state.remaining() : Infinity;
+        if (i === 0 && !state.watchdogDone && watchBudget > 0) {
           watchTimer = ctx.timer.timeout(() => {
             watchFired = true;
             if (rec.iterator && typeof rec.iterator.return === 'function') {
               try { rec.iterator.return(); } catch (e) { /* 忽略 */ }
             }
-          }, WATCHDOG_TIMEOUT_MS);
+          }, Math.max(1, Math.min(WATCHDOG_TIMEOUT_MS, watchBudget)));
         }
         let result;
         try {
@@ -2444,10 +2475,11 @@ return {
           setProgress(rec, STAGE_LLM, 'probe', null, 1, chain.length);
           // 连通性探测：跳过刚挂起的首条，探测剩余链（缓存优先，每条 PROBE_TIMEOUT_MS 超时）
           const rest = chain.slice(i + 1);
-          const pick = await probeFirstReachable(rest);
+          const probeBudget = { remaining: state.remaining, signal: state.signal };
+          const pick = await probeFirstReachable(rest, probeBudget);
           if (!pick) {
             // 剩余全不通 → 回头探测挂起首条：通畅（只是慢）→ 重试一次；不通 → 全不可用
-            const headOk = await probeEntry(entry);
+            const headOk = await probeEntry(entry, probeBudget);
             if (!headOk) {
               hlog('[enhance] chain all unavailable session=' + sessionId + ' last code=' + (lastFailure ? lastFailure.code : '?'));
               // v3.3.3（设计决策）：探测窗口已按实测放大（PROBE_TIMEOUT_MS=12s）——探测全败
@@ -2513,7 +2545,8 @@ return {
         lastFailure = result.failure || { code: 'LLM_FAILED', message: 'unknown failure' };
       }
       // v3.3.3（链耗尽）：pass 0 且未被取消/超时 → 整链重试一次（watchdogDone=true 免看门狗）
-      if (pass === 0 && !rec.cancelled && !rec.timedOut) {
+      // v4.3.0（总预算）：预算已耗尽不得再开第二轮 pass（旧实现只看 cancelled/timedOut）
+      if (pass === 0 && !rec.cancelled && !rec.timedOut && (typeof state.remaining !== 'function' || state.remaining() > 0)) {
         hlog('[enhance] chain exhausted retry pass=2 session=' + sessionId + ' last code=' + (lastFailure ? lastFailure.code : '?'));
         state.watchdogDone = true;
         continue;
@@ -2527,13 +2560,18 @@ return {
     // v3.1.3（看门狗 + 延迟连通性预检）：连通性探测——缓存优先，pingStream 短输入探测
     // （可达性：QUOTA/网络/auth/超时；探测 ≠ 生成成功，生成级失败仍由原回退链兜底）
     const probeCache = new Map();
-    async function probeEntry(entry) {
+    // v4.3.0（超时逻辑重构）：探测纳入总预算——budget = { remaining(), signal }
+    // （旧实现恒等 12s/条且不检查 rec.timedOut，实测「首条卡死 + 探测」时 26s 仍未返回）。
+    async function probeEntry(entry, budget) {
       if (!entry) return false;
       const key = entry.provider + '/' + entry.model;
       const now = Date.now();
       const hit = probeCacheGet(probeCache, key, now);
       if (hit) return hit.ok === true;
       if (llm === undefined) return false;
+      const remain = budget && typeof budget.remaining === 'function' ? budget.remaining() : Infinity;
+      if (remain <= 0) return false;
+      const probeMs = Math.max(1, Math.min(PROBE_TIMEOUT_MS, remain));
       const ref = { current: null };
       let timedOut = false;
       const timer = ctx.timer.timeout(() => {
@@ -2541,10 +2579,10 @@ return {
         if (ref.current && typeof ref.current.return === 'function') {
           try { ref.current.return(); } catch (e) { /* 忽略 */ }
         }
-      }, PROBE_TIMEOUT_MS);
+      }, probeMs);
       let r;
       try {
-        r = await pingStream(llm, entry, ref);
+        r = await pingStream(llm, entry, ref, budget && budget.signal);
       } finally {
         timer();
       }
@@ -2553,9 +2591,9 @@ return {
       hlog('[enhance] probe ' + entry.provider + '/' + entry.model + ' → ' + (ok ? 'ok ' + (r ? r.latencyMs : '?') + 'ms' : (timedOut ? 'timeout' : (r ? r.code : 'LLM_FAILED'))));
       return ok;
     }
-    async function probeFirstReachable(entries) {
+    async function probeFirstReachable(entries, budget) {
       for (const entry of entries) {
-        if (await probeEntry(entry)) return entry;
+        if (await probeEntry(entry, budget)) return entry;
       }
       return null;
     }
@@ -2563,6 +2601,17 @@ return {
     registerEnhanceStage('analyze', enhanceStageAnalyze, { priority: 100 });
     registerEnhanceStage('assemble', enhanceStageAssemble, { priority: 100 });
     registerEnhanceStage('llm', enhanceStageLlm, { priority: 100 });
+
+    // v4.3.0（运行参数一致性回执）：把**实际生效**的三项参数随响应回传，供客户端断言
+    // 「设置值 === 运行值」——出现漂移时客户端会在控制台明确告警（F12），不再默默跑偏。
+    function appliedParamsOf(state) {
+      if (!state) return null;
+      return { timeoutMs: state.timeoutMs, maxTokens: state.maxTokens, outputLimit: state.outputLimit };
+    }
+    function withApplied(result, state) {
+      const applied = appliedParamsOf(state);
+      return applied && result && typeof result === 'object' ? { ...result, applied } : result;
+    }
 
     harness.handle('enhance', async (args) => {
       // v4.2.3（F8·审计处置）：缺/空 sessionId 直接 BAD_ARGS——原 'unknown' 兜底 ⇒ 所有匿名请求
@@ -2584,26 +2633,54 @@ return {
       // v2.3（§7.3）：记录提前创建（入参校验后）——stage 从 prepare 起可被 progress RPC 轮询
       // v3.0r（细粒度进度反馈）：rec 扩展——startedAt/detailKey/detailArgs/step/total
       const rec = { cancelled: false, timedOut: false, iterator: null, stage: STAGE_PREPARE, startedAt: Date.now(), detailKey: '', detailArgs: null, step: 0, total: 0 };
+      // v4.3.0（超时逻辑重构）：取消/超时统一走 AbortSignal——真正掐断在途请求的通道
+      //（DSH llm 契约：llm.stream({ signal }) → 适配器 AbortSignal.any([consumer.signal, options.signal])）。
+      const aborter = new AbortController();
+      rec.aborter = aborter;
       pending.set(key, rec);
 
       // M2 深化：请求状态经 Pipeline 三阶段链式传递（v4.0.0：analyze→assemble→llm，检索 stage 已删）。
       // 准备阶段在 try 外（与原逻辑一致：准备期异常冒泡为 RPC 错误而非 LLM_FAILED）；
       // 超时计时自 llm 阶段起（与原逻辑一致：准备阶段不设防）。
       // v4.0.0：args.answers（[{q,a}]）与 args.skip 由 analyze 阶段读取——拼进证据正文并写入记忆链轮次。
-      const state = { args, sessionId, seq, text, key, rec };
+      const state = { args, sessionId, seq, text, key, rec, signal: aborter.signal, deadlineAt: 0 };
       await runEnhanceStages('analyze', state);
       await runEnhanceStages('assemble', state);
-      // v3.1.7（用户需求·超时无限制）：timeoutMs<=0 不挂超时计时器（0 = 无限制，等待模型自然完成）
-      const timeoutDisposer = state.timeoutMs > 0 ? ctx.timer.timeout(() => {
+      // v4.3.0（用户拍板·超时 = 总墙钟预算）：预算自**收到请求**起算（rec.startedAt），覆盖
+      // analyze/assemble + 链上每一跳 + 看门狗 + 连通探测 + 两轮 pass；0 = 无限制（不挂表）。
+      // state.remaining() 供各内层窗口（看门狗/探测/pass）收敛到同一截止时刻。
+      const budgetMs = state.timeoutMs > 0 ? state.timeoutMs : 0;
+      state.deadlineAt = budgetMs > 0 ? rec.startedAt + budgetMs : 0;
+      state.remaining = () => (state.deadlineAt === 0 ? Infinity : Math.max(0, state.deadlineAt - Date.now()));
+      let llmSettled = false;
+      // v4.3.0（超时逻辑重构·硬返回）：超时与取消共用同一条「中止即结算」通道——
+      // markAndAbort 在置标志 + abort signal 之后调用 rec.settleAbort()，本处理函数据此在
+      // **预算内**结束（即便底层 provider 不认 signal，RPC 也不会挂住；v4.3.0 前实测：
+      // 无 chunk 时 8s 未返回、含探测时 26s 未返回，界面永远停在「正在优化」）。
+      let settleAbort = null;
+      const abortPromise = new Promise((resolve) => { settleAbort = resolve; });
+      rec.settleAbort = settleAbort;
+      const timeoutDisposer = budgetMs > 0 ? ctx.timer.timeout(() => {
         markAndAbort(key, 'timedOut');
-      }, state.timeoutMs) : null;
+      }, Math.max(0, state.deadlineAt - Date.now())) : null;
 
       try {
-        await runEnhanceStages('llm', state);
-        return state.result;
+        const llmRun = runEnhanceStages('llm', state);
+        llmRun.then(() => { llmSettled = true; }, () => { llmSettled = true; });
+        const winner = await Promise.race([
+          llmRun.then(() => 'llm', () => 'llm'),
+          abortPromise.then(() => 'abort'),
+        ]);
+        if (winner === 'abort' && !llmSettled) {
+          const code = rec.timedOut ? 'TIMEOUT' : 'ABORTED';
+          hlog('[enhance] abort hard-return session=' + sessionId + ' seq=' + seq + ' code=' + code + ' budget=' + budgetMs + 'ms');
+          return { ok: false, code, message: friendlyMessage({ code }), applied: appliedParamsOf(state) };
+        }
+        await llmRun;
+        return withApplied(state.result, state);
       } catch (e) {
         herr('[enhance] unexpected error session=' + sessionId + ' seq=' + seq, e);
-        return { ok: false, code: 'LLM_FAILED', message: friendlyMessage({ code: 'LLM_FAILED' }) };
+        return { ok: false, code: 'LLM_FAILED', message: friendlyMessage({ code: 'LLM_FAILED' }), applied: appliedParamsOf(state) };
       } finally {
         if (timeoutDisposer) timeoutDisposer();
         pending.delete(key);

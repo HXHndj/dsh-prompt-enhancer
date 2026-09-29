@@ -180,12 +180,14 @@ function loadBar(helpers, sessionId) {
   const noop = () => {};
   const factory = new Function(
     'React', 'makeT', 'subscribe', 'storeFor', 'notify', 'releaseStoreIfIdle', 'errorKey', 'consumeResult',
+    // v4.3.0：错误行超时分支要读 configState.value.params.timeoutMs（{t} 填充实际预算）
+    'configState',
     src + '\n;return EnhanceBar;'
   );
   const EnhanceBar = factory(
     React, (p) => (p && typeof p.t === 'function' ? p.t : t), helpers.api.subscribe,
     helpers.api.storeFor, helpers.api.notify, helpers.api.releaseStoreIfIdle, helpers.api.errorKey,
-    helpers.api.consumeResult
+    helpers.api.consumeResult, helpers.configState
   );
   const render = (draft) => {
     cursor = 0;
@@ -762,7 +764,8 @@ test('ERRMAP-01 映射: errorKey 补 host 新码 CLARIFY_MALFORMED / NO_RECORD�
 });
 
 test('ERRMAP-02 行为: 错误行文案 = 前缀 + 具体原因；errUNKNOWN 只显示一次（不双前缀）', () => {
-  const h = loadHelpers({ memory: false });
+  // v4.3.0：给 configState 带上 params——TIMEOUT 文案的 {t} 由实际超时预算填充
+  const h = loadHelpers({ memory: false, params: { timeoutMs: 30000, maxTokens: 2000 } });
   const sid = 'sess-errmap';
   const bar = loadBar(h, sid);
   const rowText = (code) => {
@@ -776,7 +779,14 @@ test('ERRMAP-02 行为: 错误行文案 = 前缀 + 具体原因；errUNKNOWN 只
   };
   assert.equal(rowText('CLARIFY_MALFORMED'), ZH.errorPrefix + ZH.errCLARIFY_MALFORMED, 'host 新码必须显示具体原因（带前缀）');
   assert.equal(rowText('NO_RECORD'), ZH.errorPrefix + ZH.errNO_RECORD, 'NO_RECORD 同上');
-  assert.equal(rowText('TIMEOUT'), ZH.errorPrefix + ZH.errTIMEOUT, '既有码保持「优化失败：<原因>」');
+  // v4.3.0：超时文案带**实际预算值** + 设置页指引（{t} 由 configState.params.timeoutMs 填充）
+  assert.equal(rowText('TIMEOUT'), ZH.errorPrefix + ZH.errTIMEOUT.replace('{t}', '30s'),
+    '既有码保持「优化失败：<原因>」，且 {t} = 当前超时（30000ms → 30s）');
+  h.configState.value.params.timeoutMs = 0;
+  assert.equal(rowText('TIMEOUT'), ZH.errorPrefix + ZH.errTIMEOUT.replace('{t}', ZH.cfgUnlimited),
+    '0 = 无限制档位：{t} 必须落「无限制」而不是 0s/undefined');
+  h.configState.value.params.timeoutMs = 60000;
+  assert.equal(rowText('TIMEOUT'), ZH.errorPrefix + ZH.errTIMEOUT.replace('{t}', '60s'), '60000ms → 60s');
   const unknown = rowText('TOTALLY_NEW_CODE');
   assert.equal(unknown, ZH.errUNKNOWN, '未映射码只显示 errUNKNOWN 文案');
   assert.equal(unknown, '优化失败', '实机文案 = 单个「优化失败」');
@@ -3441,3 +3451,171 @@ test('AUDIT-16 optimized 持久化全链路: 完成写键 → 回收重建恢复
   assert.equal(h.api.storeFor(sid).optimized, false);
   auditNote('AUDIT-16', '写键→回收重建恢复→清链删键 全链路 OK（F5）');
 });
+
+// ---------- v4.3.0（运行参数一致性）：设置页「运行参数」区渲染级契约 ----------
+// 背景：用户现场「设 30s 却跑 120s」，页面上那条「当前模式默认：超时 30s · Token 2000 · 输出上限 8000」
+// 只描述**档位默认值**、与真实生效值无关，是误导来源（已按用户指令整块删除）。本轮改为：
+//   ① 建议行：思考等级开启且当前值低于客户端建议下限（REASONING_PARAM_FLOORS）时给可见建议 +
+//      一键「应用建议值」（**可见写入配置**，host 侧不再静默抬高）；
+//   ② 一次性通知行：「思考等级 关→开」跃迁实际抬高过一次时展示，可点掉。
+// 手法与 loadBar 同源：迷你 React 驱动真实 params-tab chunk，断言 DOM 结构与按钮接线。
+function paramsText(el) {
+  if (el === null || el === undefined || el === false || el === true) return '';
+  if (typeof el === 'string' || typeof el === 'number') return String(el);
+  if (Array.isArray(el)) return el.map(paramsText).join('');
+  const kids = Array.isArray(el.children) ? el.children : [];
+  let out = kids.map(paramsText).join('');
+  if (kids.length === 0 && el.props && el.props.children !== undefined) out += paramsText(el.props.children);
+  return out;
+}
+function paramsFind(el, cls, out) {
+  const acc = out || [];
+  if (!el || typeof el !== 'object') return acc;
+  if (Array.isArray(el)) { for (const c of el) paramsFind(c, cls, acc); return acc; }
+  const p = el.props || {};
+  if (typeof p.className === 'string' && p.className.split(/\s+/).indexOf(cls) !== -1) acc.push(el);
+  const kids = Array.isArray(el.children) ? el.children : [];
+  for (const c of kids) paramsFind(c, cls, acc);
+  if (kids.length === 0 && p.children !== undefined) paramsFind(p.children, cls, acc);
+  return acc;
+}
+function paramsFixture(over) {
+  const base = {
+    memory: true, mode: 'standard', context: { budgetChars: 8000 },
+    params: { timeoutMs: 30000, maxTokens: 2000, outputLimit: 8000 },
+    fallback: [{ provider: 'p', model: 'm' }],
+    template: {
+      mode: 'builtin', text: '',
+      texts: { lite: '', standard: '', expert: '' },
+      pick: { lite: 'default', standard: 'default', expert: 'default' },
+      custom: { lite: [], standard: [], expert: [] }, touched: [],
+    },
+  };
+  return over ? Object.assign({}, base, over) : base;
+}
+function loadParamsTab(fixture, opts) {
+  const o = opts || {};
+  const constantsSrc = decodeChunk('src/client/constants.js');
+  const src = decodeChunk('src/client/components/params-tab.js');
+  let cells = [];
+  let cursor = 0;
+  let pending = [];
+  const React = {
+    Fragment: 'Fragment',
+    createElement: (type, p, ...children) => ({ type, props: p || {}, children }),
+    useState(init) {
+      const i = cursor++;
+      if (cells[i] === undefined) cells[i] = { value: typeof init === 'function' ? init() : init };
+      return [cells[i].value, (next) => { cells[i].value = typeof next === 'function' ? next(cells[i].value) : next; }];
+    },
+    useRef(init) {
+      const i = cursor++;
+      if (cells[i] === undefined) cells[i] = { value: { current: init } };
+      return cells[i].value;
+    },
+    useEffect(fn, deps) {
+      const i = cursor++;
+      const prev = cells[i];
+      const changed = !prev || !prev.deps || !deps || deps.length !== prev.deps.length
+        || deps.some((d, k) => d !== prev.deps[k]);
+      cells[i] = { kind: 'effect', deps };
+      if (changed) pending.push(fn);
+    },
+    useCallback(fn) { return fn; },
+  };
+  const configState = { value: fixture };
+  const calls = { applied: 0, dismissed: 0, saved: [] };
+  const factory = new Function(
+    'React', 'makeT', 'MarqueeSelect', 'dshEnhId', 'configState', 'saveConfig', 'applyModeSwitch', 'getFocusedSession',
+    'host', 'reasoningParamNotice', 'subscribeReasoningNotice', 'dismissReasoningNotice', 'applyRecommendedParams',
+    constantsSrc + '\n' + src + '\n;return ParamsTab;'
+  );
+  const t = (k) => (ZH[k] !== undefined ? ZH[k] : k);
+  const ParamsTab = factory(
+    React, () => t, (props) => React.createElement('select', props, props.children), (p) => 'id-' + p,
+    configState, (patch) => { calls.saved.push(patch); }, () => {}, () => null,
+    { call: () => Promise.resolve({ ok: true }) },
+    () => (o.notice !== undefined ? o.notice : null), () => () => {}, () => { calls.dismissed += 1; },
+    () => { calls.applied += 1; return true; },
+  );
+  const render = () => {
+    cursor = 0;
+    pending = [];
+    const el = ParamsTab({ t });
+    const fns = pending;
+    pending = [];
+    for (const fn of fns) fn();
+    return el;
+  };
+  return { render, calls, configState };
+}
+const REASONING_ON = { fallback: [{ provider: 'p', model: 'm', reasoning: { enabled: true, effort: 'high' } }] };
+
+test('PARAMS-V43-01 设置页：误导性「当前模式默认」提示行已整块删除（源码 + i18n + 渲染三层）', () => {
+  const src = decodeChunk('src/client/components/params-tab.js');
+  assert.equal(src.includes('dsh-plg-params-note'), false, '旧提示行必须整块删除（用户指令）');
+  assert.equal(src.includes('cfgParamsModeDefault'), false, '旧提示文案不得再被引用');
+  const i18n = decodeChunk('src/client/i18n.js');
+  assert.equal(i18n.includes('cfgParamsModeDefault'), false, 'i18n 死键必须同步删除（ZH/EN 两条）');
+  const tab = loadParamsTab(paramsFixture());
+  assert.equal(paramsText(tab.render()).includes('当前模式默认'), false, '渲染结果里不得再出现该文案');
+  // 三个下拉仍按配置渲染（接线不得回退）
+  assert.ok(src.includes('clampParamDisplay(cfg.params.timeoutMs'), '超时下拉必须仍按配置值渲染');
+  assert.ok(src.includes('clampParamDisplay(cfg.params.maxTokens'), 'Token 下拉必须仍按配置值渲染');
+  assert.ok(src.includes('clampParamDisplay(cfg.params.outputLimit'), '输出上限下拉必须仍按配置值渲染');
+});
+
+test('PARAMS-V43-02 建议行：思考等级开启且低于建议下限 → 出建议行 + 一键可见写入', () => {
+  const on = loadParamsTab(paramsFixture(REASONING_ON));
+  const tree = on.render();
+  const advice = paramsFind(tree, 'dsh-plg-param-advice');
+  assert.equal(advice.length, 1, '建议行必须在位（30s/2000 低于建议下限）');
+  const txt = paramsText(advice[0]);
+  assert.ok(txt.includes('high'), '文案须点明思考等级：' + txt);
+  assert.ok(txt.includes('120s'), '文案须给出建议超时 120s：' + txt);
+  assert.ok(txt.includes('8000'), '文案须给出建议 Token 8000：' + txt);
+  assert.ok(txt.includes('30s') && txt.includes('2000'), '文案须回显当前值：' + txt);
+  const btn = advice[0].children.filter((c) => c && c.type === 'button')[0];
+  assert.ok(btn && paramsText(btn).includes('应用建议值'), '建议行须带「应用建议值」按钮');
+  btn.props.onClick();
+  assert.equal(on.calls.applied, 1, '点击必须走 applyRecommendedParams（可见写入，非运行时改写）');
+});
+
+test('PARAMS-V43-03 建议行边界：已达标 / 0=无限制 / 思考等级关闭 → 一律不渲染', () => {
+  const cases = [
+    ['已达标', paramsFixture(Object.assign({}, REASONING_ON, { params: { timeoutMs: 120000, maxTokens: 8000, outputLimit: 8000 } }))],
+    ['0=无限制', paramsFixture(Object.assign({}, REASONING_ON, { params: { timeoutMs: 0, maxTokens: 0, outputLimit: 0 } }))],
+    ['思考等级关闭', paramsFixture()],
+  ];
+  for (const [label, fx] of cases) {
+    const tab = loadParamsTab(fx);
+    assert.equal(paramsFind(tab.render(), 'dsh-plg-param-advice').length, 0, label + '：不得出建议行');
+  }
+});
+
+test('PARAMS-V43-04 一次性通知行：回显抬高后的实际值 + 可关闭；无通知态不渲染', () => {
+  const notice = { effort: 'high', prev: { timeoutMs: 30000, maxTokens: 2000 }, next: { timeoutMs: 120000, maxTokens: 8000 } };
+  const fx = paramsFixture(Object.assign({}, REASONING_ON, { params: { timeoutMs: 120000, maxTokens: 8000, outputLimit: 8000 } }));
+  const tab = loadParamsTab(fx, { notice });
+  const row = paramsFind(tab.render(), 'dsh-plg-param-notice');
+  assert.equal(row.length, 1, '通知行必须在位');
+  const txt = paramsText(row[0]);
+  assert.ok(txt.includes('120s') && txt.includes('8000'), '通知须回显抬高后的实际值：' + txt);
+  const btn = row[0].children.filter((c) => c && c.type === 'button')[0];
+  assert.ok(btn, '通知行须带关闭按钮');
+  btn.props.onClick();
+  assert.equal(tab.calls.dismissed, 1, '关闭必须走 dismissReasoningNotice');
+  const none = loadParamsTab(paramsFixture());
+  assert.equal(paramsFind(none.render(), 'dsh-plg-param-notice').length, 0, '无通知态不得渲染通知行');
+});
+
+test('PARAMS-V43-05 文案键 ZH/EN 成对：三个新键在位、旧键与 {t} 占位口径正确', () => {
+  const i18n = decodeChunk('src/client/i18n.js');
+  for (const k of ['cfgParamAdviceReasoning', 'cfgParamAdviceApply', 'cfgParamNoticeApplied']) {
+    assert.equal((i18n.match(new RegExp(k + ':', 'g')) || []).length, 2, k + ' 必须 ZH/EN 成对');
+  }
+  assert.equal((i18n.match(/cfgParamsModeDefault:/g) || []).length, 0, 'cfgParamsModeDefault 必须已删');
+  assert.equal((i18n.match(/errTIMEOUT:/g) || []).length, 2, 'errTIMEOUT 必须 ZH/EN 成对');
+  assert.ok(i18n.includes('请求超时（{t} 内未完成）'), 'errTIMEOUT 必须带 {t} 占位（由 enhance-bar 填充实际预算）');
+});
+

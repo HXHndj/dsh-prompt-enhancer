@@ -116,9 +116,10 @@ test('SMK-05 RPC schema accepts real client payload shapes', () => {
   assert.equal(validateRpcArgs('enhance', { sessionId: 's', draft: 'x' }).ok, false);
 });
 
-// v2.9.0-fix：reasoning（带 effort）链节自动放宽 maxTokens（>=8000）——
-// 思考过程消耗输出预算，配置的 2000 在长输入 + effort=max 时耗尽 → 空流。
-test('SMK-06 reasoning link auto-widens maxTokens', async () => {
+// v4.3.0（2026-09-29 用户拍板·运行参数一致性）：**删除** v2.9.0-fix 的「reasoning 链自动放宽 maxTokens
+// ≥8000」——设置值 = 实际下发值。原由（思考吃预算 → EMPTY_RESPONSE）改由客户端在「开启思考等级那一刻」
+// 可见地把建议值写进配置（state.js REASONING_PARAM_FLOORS），不再在宿主运行时静默改写用户设置。
+test('SMK-06 reasoning link keeps configured maxTokens (v4.3.0 严格照办)', async () => {
   const seen = [];
   const { handlers } = boot({ llm: mockLlm(seen) });
   const out = await handlers.get('enhance')({
@@ -134,7 +135,9 @@ test('SMK-06 reasoning link auto-widens maxTokens', async () => {
   assert.equal(out.ok, true);
   assert.equal(seen.length, 1);
   assert.equal(seen[0].reasoningEffort, 'max');
-  assert.equal(seen[0].maxTokens, 8000);
+  assert.equal(seen[0].maxTokens, 2000, 'v4.3.0：不再放宽为 8000（设置值 = 运行值）');
+  assert.deepEqual(out.applied, { timeoutMs: 30000, maxTokens: 2000, outputLimit: 8000 },
+    'v4.3.0 回执：实际生效值必须 === 配置值');
 });
 
 test('SMK-07 non-reasoning link keeps configured maxTokens', async () => {
@@ -449,4 +452,128 @@ test('SMK-20 chain exhausted → one whole-chain retry reaches m-b (v3.3.3)', as
   assert.deepEqual(gen.map((p) => p.model), ['m-a', 'm-b', 'm-a', 'm-b'], '两轮 × 两模型（耗尽后整链重试一次）');
   const probe = seen.filter((p) => String(p.system || '').includes('connectivity probe'));
   assert.equal(probe.length, 0, '生成级失败不触发连通性探测');
+});
+
+// ============================================================================
+// v4.3.0（2026-09-29 用户拍板）：运行参数一致性 + 超时逻辑重构
+//   · 严格照办：宿主不再按 reasoningEffort 放宽 timeoutMs / maxTokens；
+//   · 超时 = 从**收到请求**起的总墙钟预算（含 analyze/assemble、链上每一跳、看门狗、连通探测、两轮 pass）；
+//   · 到期 → AbortSignal 中断 + **硬返回**（不认 signal 的第三方适配器也不能把 RPC 挂住）；
+//   · 取消与超时共用同一条「中止即结算」通道（cancel → ABORTED）。
+// ============================================================================
+
+// 挂起流：忠实复刻 dsh-llm adapterStream 的 async generator 语义——
+// 在 await 挂起期间调用 iterator.return() 只会排队（须等当前 await 结算），
+// 故 v4.3.0 之前只有 return() 一条中断通道，超时对「不出首字」的请求完全无效。
+//   honorSignal=false：纯卡住（模拟不认 signal 的第三方适配器）→ 只有硬返回能结束；
+//   honorSignal=true ：监听 signal.abort 后立即结束（模拟 dsh-llm-deepseek 的 AbortSignal.any 行为）。
+function stallStream(sink, opts) {
+  const o = opts || {};
+  const stallMs = typeof o.stallMs === 'number' ? o.stallMs : 5000;
+  return {
+    stream(params) {
+      sink.push(params);
+      async function* gen() {
+        await new Promise((resolve) => {
+          const t = setTimeout(resolve, stallMs);
+          if (o.honorSignal && params.signal) {
+            params.signal.addEventListener('abort', () => { clearTimeout(t); resolve(); }, { once: true });
+          }
+        });
+        yield { type: 'text-delta', text: '迟到的首字' };
+        yield { type: 'finish', reason: { kind: 'stop' } };
+      }
+      return { [Symbol.asyncIterator]: () => gen() };
+    },
+  };
+}
+
+test('SMK-T01 超时严格照办：reasoning 链 + 设置 1000ms ⇒ 1000ms 内硬返回 TIMEOUT（不再放宽为 120s）', async () => {
+  const seen = [];
+  const { handlers } = boot({ llm: stallStream(seen, { stallMs: 5000 }), timer: REAL_TIMER });
+  const t0 = Date.now();
+  const out = await handlers.get('enhance')({
+    sessionId: 's', seq: 1, text: '优化一下',
+    config: {
+      mode: 'standard',
+      fallback: [{ provider: 'p', model: 'm', reasoning: { enabled: true, effort: 'high' } }],
+      params: { timeoutMs: 1000, maxTokens: 2000, outputLimit: 8000 },
+    },
+  });
+  const elapsed = Date.now() - t0;
+  assert.equal(out.ok, false);
+  assert.equal(out.code, 'TIMEOUT');
+  assert.ok(elapsed < 2500, '必须在预算附近硬返回（实测 ' + elapsed + 'ms；旧实现会等满 5000ms 的流）');
+  assert.deepEqual(out.applied, { timeoutMs: 1000, maxTokens: 2000, outputLimit: 8000 }, '失败路径同样回执实际生效值');
+  const logs = (await handlers.get('logs/last')({})).lines.join('\n');
+  assert.ok(logs.includes('timeout=1000'), '宿主日志须自报严格照办的 1000ms（旧实现为 Math.max(x,120000)）');
+});
+
+test('SMK-T02 AbortSignal 真透传且到期即 abort（不认 signal 的适配器也靠硬返回收口）', async () => {
+  const seen = [];
+  const { handlers } = boot({ llm: stallStream(seen, { stallMs: 5000 }), timer: REAL_TIMER });
+  const out = await handlers.get('enhance')({
+    sessionId: 's', seq: 1, text: '优化一下',
+    config: { mode: 'standard', fallback: [{ provider: 'p', model: 'm' }], params: { timeoutMs: 1000, maxTokens: 2000, outputLimit: 8000 } },
+  });
+  assert.equal(out.code, 'TIMEOUT');
+  assert.equal(seen.length, 1);
+  assert.equal(typeof seen[0].signal, 'object', 'llm.stream 必须收到 signal');
+  assert.equal(typeof seen[0].signal.addEventListener, 'function', 'signal 必须是 AbortSignal');
+  assert.equal(seen[0].signal.aborted, true, '到期后 signal 必须已 abort（真中断在途请求）');
+});
+
+test('SMK-T03 适配器认 signal 时走协作式中断：预算内结束且不回退到卡死路径', async () => {
+  const seen = [];
+  const { handlers } = boot({ llm: stallStream(seen, { stallMs: 5000, honorSignal: true }), timer: REAL_TIMER });
+  const t0 = Date.now();
+  const out = await handlers.get('enhance')({
+    sessionId: 's', seq: 1, text: '优化一下',
+    config: { mode: 'standard', fallback: [{ provider: 'p', model: 'm' }], params: { timeoutMs: 1000, maxTokens: 2000, outputLimit: 8000 } },
+  });
+  const elapsed = Date.now() - t0;
+  assert.equal(out.code, 'TIMEOUT');
+  assert.ok(elapsed < 2000, '协作式中断应在预算附近结束（实测 ' + elapsed + 'ms）');
+});
+
+test('SMK-T04 cancel RPC 走同一中止通道：ABORTED 硬返回 + signal 已 abort', async () => {
+  const seen = [];
+  const { handlers } = boot({ llm: stallStream(seen, { stallMs: 5000 }), timer: REAL_TIMER });
+  const pending = handlers.get('enhance')({
+    sessionId: 'cs', seq: 7, text: '优化一下',
+    config: { mode: 'standard', fallback: [{ provider: 'p', model: 'm' }], params: { timeoutMs: 0, maxTokens: 2000, outputLimit: 8000 } },
+  });
+  await new Promise((r) => setTimeout(r, 150));
+  await handlers.get('cancel')({ sessionId: 'cs', seq: 7 });
+  const t0 = Date.now();
+  const out = await pending;
+  assert.equal(out.ok, false);
+  assert.equal(out.code, 'ABORTED');
+  assert.ok(Date.now() - t0 < 1500, '取消后必须立即结算（旧实现只排队 iterator.return()，会一直挂着）');
+  assert.equal(seen[0].signal.aborted, true, '取消同样要 abort signal');
+});
+
+test('SMK-T05 timeoutMs=0（无限制）：不挂预算表、正常完成、signal 不 abort', async () => {
+  const seen = [];
+  const { handlers } = boot({ llm: mockLlm(seen), timer: REAL_TIMER });
+  const t0 = Date.now();
+  const out = await handlers.get('enhance')({
+    sessionId: 's', seq: 1, text: '优化一下',
+    config: { mode: 'standard', fallback: [{ provider: 'p', model: 'm' }], params: { timeoutMs: 0, maxTokens: 2000, outputLimit: 8000 } },
+  });
+  assert.equal(out.ok, true);
+  assert.ok(Date.now() - t0 < 2000, '0 = 无限制，不该被任何预算表打断');
+  assert.equal(seen[0].signal.aborted, false);
+  assert.deepEqual(out.applied, { timeoutMs: 0, maxTokens: 2000, outputLimit: 8000 });
+});
+
+test('SMK-T06 产物接线断言：放宽代码已删、探测/看门狗收敛到同一截止时刻、日志打印实际值', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'plugin-host.js'), 'utf8');
+  assert.equal(src.includes('Math.max(cfg.timeoutMs, 120000)'), false, 'v4.3.0：超时静默放宽必须删除');
+  assert.equal(src.includes('Math.max(maxTokens, 8000)'), false, 'v4.3.0：maxTokens 静默放宽必须删除');
+  assert.ok(src.includes('state.timeoutMs = cfg.timeoutMs;'), '超时必须严格照办');
+  assert.ok(src.includes('Math.min(PROBE_TIMEOUT_MS, remain)'), '连通探测须受总预算约束');
+  assert.ok(src.includes('Math.min(WATCHDOG_TIMEOUT_MS, watchBudget)'), '看门狗须受总预算约束');
+  assert.ok(src.includes('rec.aborter.abort()'), 'markAndAbort 必须先掐 AbortSignal');
+  assert.ok(src.includes("...(state.signal ? { signal: state.signal } : {}),"), 'signal 必须透传给 llm.stream');
 });
