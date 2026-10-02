@@ -3054,6 +3054,50 @@ test('V42-31 箭头动画: ▾ 触发器 caret span（aria-expanded 唯一状态
   assert.equal(countOf(rm[0], 'transition:none'), 2, '两条 transition 关闭各一次（祖先作用域选择器压过同权重后出现的声明）');
 });
 
+// v4.3.1（复核处置·F1）：键盘可达——主键（idle/enhancing/clarify 三态）与 ▾ 触发器进入 Tab 序列，
+// 副键保持 -1；焦点环复用仓库既有 brand-primary 范式；skeleton 旧「不可选中」口径同步作废。
+test('V431-F1 键盘可达：主键三态 + ▾ 进 Tab 序列、副键仍 -1、焦点环与文档同步', async () => {
+  const btn = decodeChunk('src/client/components/enhance-button.js');
+  const menu = decodeChunk('src/client/components/enhance-menu.js');
+  const css = decodeChunk('src/client/styles.js');
+  const skeleton = decodeChunk('src/client/skeleton.js');
+  // ① 主键三态接线：idle/result 由 disabled 决定；enhancing / clarify 恒可聚焦；副键不变
+  assert.ok(btn.includes('tabIndex: disabled ? -1 : 0'), 'idle/result 主键必须可 Tab（禁用态除外）');
+  assert.equal(countOf(btn, 'tabIndex: 0,'), 2, 'enhancing / clarify 两态主键各一处 tabIndex:0');
+  assert.equal(countOf(btn, 'tabIndex: -1,'), 1, '副键保持 tabIndex:-1（全文仅此一处）');
+  // ② ▾ 触发器：可 Tab 聚焦（菜单内 ↑/↓/Enter + Escape 单通道原已具备）
+  assert.ok(menu.includes("'aria-expanded': open ? 'true' : 'false',\n      // v4.3.1（复核处置·F1）：▾ 触发器进入 Tab 序列（菜单内 ↑/↓/Enter 键盘导航原已具备）\n      tabIndex: 0,"),
+    '▾ 触发器必须可 Tab 聚焦');
+  // ③ 焦点环：仓库既有 brand-primary 范式，且只加一处（不与 hover 规则打架）
+  assert.equal(countOf(css, '.dsh-enh-btn:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}'), 1,
+    '缺主键/▾ 焦点环规则（brand-primary 范式）');
+  // ④ 文档同步：skeleton 旧口径必须已更新（防「注释与代码相反」）
+  assert.equal(skeleton.includes('优化按钮不可选中（tabIndex=-1，无焦点环），仅点击触发'), false, 'skeleton 过时说明必须同步删除');
+  assert.ok(skeleton.includes('优化按钮 v4.3.1 起进入 Tab 序列'), 'skeleton 缺新口径说明');
+  // ⑤ 行为级：渲染后主键 tabIndex 由 disabled 决定（可点态 0；提交流程锁定期禁用 → -1）
+  // 注意：空输入渲染会经 consumeResult 作废待消费结果，故三个用例各用独立会话，互不污染。
+  const h = loadHelpers({ memory: true, mode: 'standard' });
+  const inputActions = { setDraft: () => {} };
+  h.hostStub.respond = () => ({ ok: true, text: 'OUTF' });
+  // 空输入态：非禁用（点击=开合设置菜单）→ 可 Tab
+  const bA = loadButtonSpy(h, 'sess-v431-f1-a');
+  assert.equal(mainBtnOf(bA.render('', 'plain')).props.tabIndex, 0, '空输入态可 Tab（点击=开合设置菜单，非禁用）');
+  // 首轮有草稿：非禁用 → 可 Tab
+  const bB = loadButtonSpy(h, 'sess-v431-f1-b');
+  assert.equal(mainBtnOf(bB.render('草稿F', 'plain')).props.tabIndex, 0, '可点态必须进 Tab 序列');
+  // 已优化 + 草稿已改 + 提交期锁定（guardPasses phase=submitting）→ 主键禁用 → 退出 Tab 序列
+  const sidC = 'sess-v431-f1-c';
+  h.api.enhance(sidC, '草稿F', inputActions, { current: '草稿F' });
+  await flush();
+  const bC = loadButtonSpy(h, sidC);
+  bC.render('草稿F', 'plain'); // 结果到达后的首帧（draft = backup）
+  bC.render('OUTF', 'plain');  // 结果已回注（draft = enhanced）
+  bC.render('OUTF 改了', 'submitting'); // 用户已改 → 本帧 effect 把 result 态收敛为 idle
+  const busy = bC.render('OUTF 改了', 'submitting'); // 已改 + 记忆开 + 提交期锁定 → disabled=true
+  assert.equal(mainBtnOf(busy).props.disabled, true, '提交期主键禁用前置条件');
+  assert.equal(mainBtnOf(busy).props.tabIndex, -1, '禁用态必须退出 Tab 序列');
+});
+
 test('V42-32 UI 接线: .dsh-enh-split=[aux, main, EnhanceMenu]；main 仍 button+mainRef；aux 字形/tabIndex；i18n 成对 + 空输入邻近契约', async () => {
   const h = loadHelpers({ memory: true, mode: 'standard' });
   const sid = 'sess-v42-wire';

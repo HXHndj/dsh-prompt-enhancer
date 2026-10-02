@@ -575,5 +575,105 @@ test('SMK-T06 产物接线断言：放宽代码已删、探测/看门狗收敛�
   assert.ok(src.includes('Math.min(PROBE_TIMEOUT_MS, remain)'), '连通探测须受总预算约束');
   assert.ok(src.includes('Math.min(WATCHDOG_TIMEOUT_MS, watchBudget)'), '看门狗须受总预算约束');
   assert.ok(src.includes('rec.aborter.abort()'), 'markAndAbort 必须先掐 AbortSignal');
-  assert.ok(src.includes("...(state.signal ? { signal: state.signal } : {}),"), 'signal 必须透传给 llm.stream');
+  // v4.3.1（复核处置·N2）：signal 仍是「全局预算/取消 ⊕ 本次尝试」的组合透传——
+  // 看门狗触发时真掐本次在途请求（旧实现只排队 iterator.return()）。
+  assert.ok(src.includes('signal: attemptSignal,'), 'signal 必须透传给 llm.stream（组合 signal）');
+  assert.ok(src.includes('AbortSignal.any([state.signal, attemptAborter.signal])'), '尝试级 signal = 全局 ⊕ 看门狗');
+  assert.ok(src.includes('try { attemptAborter.abort(); }'), '看门狗须真掐 signal（v4.3.1 N2）');
 });
+
+// ============================================================================
+// v4.3.1（复核处置）：P1/N3 框架 · N1 混排保终稿 · P2 继续优化框架 · B1 pending 泄漏 · N2 看门狗掐 signal
+// ============================================================================
+
+const V431_CLARIFY_JSON = '{"clarify": true, "questions": [{"q": "「它」指哪个函数？", "options": ["parseConfig", "loadPlugins"]}]}';
+
+// N1：混排输出（终稿 + 澄清 JSON）旧实现整段丢弃终稿、只弹澄清卡；现改为有实质正文即保终稿。
+test('SMK-V431-01 混排保终稿：终稿保留 + 澄清 JSON 剥离；纯澄清信号仍走澄清卡', async () => {
+  const seen = [];
+  const mixed = '## 任务\n将「它」指代的部分改为异步实现，保持其他调用不受影响。\n## 要求\n1. 具体指代以原文为准。\n\n```json\n' + V431_CLARIFY_JSON + '\n```';
+  const { handlers } = boot({ llm: mockLlmScripted(seen, [mixed]) });
+  const out = await handlers.get('enhance')({
+    sessionId: 's', seq: 1, text: '把它改成异步的，项目里还有别的函数要用',
+    config: { mode: 'expert', fallback: [{ provider: 'p', model: 'm' }], params: { maxTokens: 4000, timeoutMs: 60000 } },
+  });
+  assert.equal(out.ok, true);
+  assert.equal(out.clarify, undefined, '混排时不得只弹澄清卡（终稿优先）');
+  assert.equal(typeof out.text, 'string');
+  assert.ok(out.text.includes('## 任务'), '终稿正文必须保留');
+  assert.equal(out.text.includes('clarify'), false, '澄清 JSON 必须被剥离');
+  assert.equal(out.text.includes('```'), false, '围栏空壳一并剥离');
+  // 纯澄清信号（残余为空）→ 仍走澄清卡（与 SMK-16 同口径，此处锁"不误吞真提问"）
+  const seen2 = [];
+  const pure2 = boot({ llm: mockLlmScripted(seen2, ['```json\n' + V431_CLARIFY_JSON + '\n```']) });
+  const out2 = await pure2.handlers.get('enhance')({
+    sessionId: 's', seq: 1, text: '把它改成异步的，项目里还有别的函数要用',
+    config: { mode: 'expert', fallback: [{ provider: 'p', model: 'm' }], params: { maxTokens: 4000, timeoutMs: 60000 } },
+  });
+  assert.equal(out2.ok, true);
+  assert.equal(out2.text, '', '纯澄清信号不产出终稿');
+  assert.equal(Array.isArray(out2.clarify) && out2.clarify.length, 1, '纯澄清信号照旧弹卡');
+});
+
+// P2：记忆开 + 有历史轮但本轮与上轮无 diff → 旧实现不给任何继续优化框架；现改为按"注入了历史轮"给框架。
+test('SMK-V431-02 继续优化框架按"有历史轮"给（无 diff 也给），方向块仍只在有 diff 时追加', async () => {
+  const seen = [];
+  const { handlers } = boot({ llm: mockLlm(seen) });
+  const out = await handlers.get('enhance')({
+    sessionId: 's', seq: 9, text: '旧优化结果',
+    config: { mode: 'standard', memory: true, fallback: [{ provider: 'p', model: 'm' }], params: { maxTokens: 2000, timeoutMs: 30000 } },
+    memory: { rounds: [{ input: '旧需求', output: '旧优化结果' }] },
+  });
+  assert.equal(out.ok, true);
+  assert.ok(seen[0].system.includes('继续优化模式'), '无 diff 也必须给继续优化框架（v4.3.1 P2）');
+  const messages = seen[0].messages;
+  assert.ok(messages.length >= 3, '历史轮确实注入（' + messages.length + ' 条消息）');
+  const finalText = messages[messages.length - 1].content[0].text;
+  assert.equal(finalText.includes('【本轮修改】'), false, '无 diff 不追加方向块');
+  assert.ok(finalText.includes('旧优化结果'), '本轮草稿仍在证据正文里');
+});
+
+// B1：准备期（analyze/assemble）异常原先直接冒泡出 try/finally → pending 记录永不清理。
+test('SMK-V431-03 准备期异常：仍按 RPC 错误冒泡，但 pending 必须已清理（无假进度）', async () => {
+  const { handlers } = boot({ llm: mockLlm([]) });
+  const hostile = { fallback: [{ provider: 'p', model: 'm' }], get params() { throw new Error('boom'); } };
+  let rejected = false;
+  try {
+    await handlers.get('enhance')({ sessionId: 's', seq: 5, text: '优化一下', config: hostile });
+  } catch (e) {
+    rejected = true;
+  }
+  assert.equal(rejected, true, '准备期异常语义不变：冒泡为 RPC 错误');
+  const prog = await handlers.get('enhance/progress')({ sessionId: 's', seq: 5 });
+  assert.equal(prog.ok, false);
+  assert.equal(prog.code, 'NO_RECORD', 'pending 必须已清理（旧实现会长期返回假进度）');
+});
+
+// N2：看门狗触发时须真掐本次尝试的 signal（旧实现只 iterator.return()，与自述矛盾）。
+// 定时器桩只放行"看门狗窗口"（精确等于 bundle 内 WATCHDOG_TIMEOUT_MS），预算计时器（30s）与
+// 探测定时器（12s）都不触发——把 15s 等待压成毫秒级，并隔离出「只有看门狗会 abort」的因果。
+const WATCHDOG_MS = Number((fs.readFileSync(path.join(__dirname, '..', 'plugin-host.js'), 'utf8')
+  .match(/WATCHDOG_TIMEOUT_MS\s*=\s*(\d+)/) || [])[1]);
+const WATCHDOG_ONLY_TIMER = {
+  timeout: (cb, ms) => { if (ms === WATCHDOG_MS) queueMicrotask(cb); return () => {}; },
+};
+test('SMK-V431-04 看门狗真掐 signal：本次尝试 signal 在看门狗触发后 abort（N2）', async () => {
+  assert.ok(WATCHDOG_MS > 0, 'bundle 内 WATCHDOG_TIMEOUT_MS 必须可读');
+  const seen = [];
+  const { handlers } = boot({ llm: mockLlmProbe(seen, { hangModel: 'm-a' }), timer: WATCHDOG_ONLY_TIMER });
+  const out = await handlers.get('enhance')({
+    sessionId: 's', seq: 3, text: '优化一下',
+    config: {
+      mode: 'standard',
+      fallback: [{ provider: 'p', model: 'm-a' }, { provider: 'p', model: 'm-b' }],
+      params: { maxTokens: 2000, timeoutMs: 30000 },
+    },
+  });
+  assert.equal(out.ok, true);
+  assert.equal(out.model, 'm-b', '看门狗 → 探测 → 换链生成（既有行为不变）');
+  const gen = seen.filter((p) => !String(p.system || '').includes('connectivity probe'));
+  assert.equal(gen[0].model, 'm-a', '首次尝试是挂起的 m-a');
+  assert.equal(typeof gen[0].signal, 'object', 'signal 必须透传');
+  assert.equal(gen[0].signal.aborted, true, '看门狗触发后本次尝试 signal 必须已 abort（v4.3.1 N2）');
+});
+
